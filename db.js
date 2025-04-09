@@ -14,12 +14,21 @@ const pool = new Pool({
     keepAliveInitialDelayMillis: 10000,
     ssl: {
         rejectUnauthorized: false
-    }
+    },
+    // Force IPv4
+    family: 4
 });
 
 // Handle pool errors
 pool.on('error', (err, client) => {
     console.error('Unexpected error on idle client', err);
+    if (err.code === 'ENETUNREACH') {
+        console.error('Network unreachable. Please check your internet connection and firewall settings.');
+    } else if (err.code === 'ECONNREFUSED') {
+        console.error('Connection refused. Please check if the database server is running and accessible.');
+    } else if (err.code === '28P01') {
+        console.error('Invalid database credentials. Please check your DB_USER and DB_PASSWORD environment variables.');
+    }
     console.error('Attempting to recover from pool error');
 });
 
