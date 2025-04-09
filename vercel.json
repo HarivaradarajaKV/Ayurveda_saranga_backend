@@ -8,16 +8,39 @@
     ],
     "routes": [
         {
+            "src": "/api/products.*",
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS"
+            },
+            "dest": "server.js"
+        },
+        {
+            "src": "/api/categories.*",
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS"
+            },
+            "dest": "server.js"
+        },
+        {
+            "src": "/api/health",
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+                "Access-Control-Allow-Methods": "GET, OPTIONS"
+            },
+            "dest": "server.js"
+        },
+        {
             "src": "/api/(.*)",
             "headers": {
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
                 "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS"
             },
-            "continue": true
-        },
-        {
-            "src": "/api/(.*)",
             "dest": "server.js"
         },
         {
