@@ -61,6 +61,23 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Root route handler
+app.get('/', (req, res) => {
+    res.json({
+        message: 'Welcome to Ayurveda Saranga API',
+        status: 'active',
+        endpoints: {
+            health: '/api/health',
+            products: '/api/products',
+            categories: '/api/categories',
+            auth: '/api/auth',
+            orders: '/api/orders',
+            cart: '/api/cart',
+            wishlist: '/api/wishlist'
+        }
+    });
+});
+
 // API Routes
 const authRouter = require('./routes/auth');
 const productsRouter = require('./routes/products');
