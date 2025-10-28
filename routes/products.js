@@ -27,7 +27,7 @@ const uploadConfig = {
     storage: storage,
     fileFilter: fileFilter,
     limits: {
-        fileSize: 5 * 1024 * 1024 // 5MB limit
+        fileSize: 10 * 1024 * 1024 // 10MB limit for higher quality images
     }
 };
 
@@ -409,7 +409,10 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             existing_image3,
             remove_image1,
             remove_image2,
-            remove_image3
+            remove_image3,
+            replace_image1,
+            replace_image2,
+            replace_image3
         } = req.body;
         
         // Get current images
@@ -424,33 +427,54 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
 
         const current = currentImages.rows[0];
 
-        // Handle image updates
-        let image_url = current.image_url;
-        let image_url2 = current.image_url2;
-        let image_url3 = current.image_url3;
+        // Handle image updates - prioritize new uploads over existing images
+        let image_url = null;
+        let image_url2 = null;
+        let image_url3 = null;
 
-        // Process new uploaded files
+        // Process new uploaded files first (these take priority)
         if (req.files) {
             if (req.files.image1 && req.files.image1[0]) {
                 image_url = `/uploads/${req.files.image1[0].filename}`;
+                console.log('Setting new image1:', image_url);
             }
             if (req.files.image2 && req.files.image2[0]) {
                 image_url2 = `/uploads/${req.files.image2[0].filename}`;
+                console.log('Setting new image2:', image_url2);
             }
             if (req.files.image3 && req.files.image3[0]) {
                 image_url3 = `/uploads/${req.files.image3[0].filename}`;
+                console.log('Setting new image3:', image_url3);
             }
         }
 
-        // Handle image removals and existing images
-        if (remove_image1 === 'true') image_url = null;
-        else if (existing_image1) image_url = existing_image1;
+        // Handle image removals
+        if (remove_image1 === 'true') {
+            image_url = null;
+            console.log('Removing image1');
+        }
+        if (remove_image2 === 'true') {
+            image_url2 = null;
+            console.log('Removing image2');
+        }
+        if (remove_image3 === 'true') {
+            image_url3 = null;
+            console.log('Removing image3');
+        }
 
-        if (remove_image2 === 'true') image_url2 = null;
-        else if (existing_image2) image_url2 = existing_image2;
-
-        if (remove_image3 === 'true') image_url3 = null;
-        else if (existing_image3) image_url3 = existing_image3;
+        // Only keep existing images if no new file was uploaded and not marked for removal
+        if (!req.files?.image1 && remove_image1 !== 'true' && existing_image1) {
+            image_url = existing_image1;
+            console.log('Keeping existing image1:', image_url);
+        }
+        if (!req.files?.image2 && remove_image2 !== 'true' && existing_image2) {
+            image_url2 = existing_image2;
+            console.log('Keeping existing image2:', image_url2);
+        }
+        if (!req.files?.image3 && remove_image3 !== 'true' && existing_image3) {
+            image_url3 = existing_image3;
+            console.log('Keeping existing image3:', image_url3);
+        }
 
         // Rest of the update logic remains the same
         let offerNum = 0;
@@ -506,7 +530,16 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             return res.status(404).json({ error: 'Product not found' });
         }
 
-        res.json(updatedProduct.rows[0]);
+        const result = updatedProduct.rows[0];
+        console.log('Final updated product with images:', {
+            id: result.id,
+            name: result.name,
+            image_url: result.image_url,
+            image_url2: result.image_url2,
+            image_url3: result.image_url3
+        });
+
+        res.json(result);
     } catch (error) {
         console.error('Error updating product:', error);
         res.status(500).json({ error: 'Failed to update product' });

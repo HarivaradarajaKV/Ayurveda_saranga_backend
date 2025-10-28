@@ -4,25 +4,26 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db');
 const nodemailer = require('nodemailer');
 
-// Email configuration
+// Email configuration with fallback for missing credentials
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD
+        user: process.env.EMAIL_USER || 'demo@example.com',
+        pass: process.env.EMAIL_PASSWORD || 'demo-password'
     }
 });
 
 // Add detailed error logging for email verification
 transporter.verify((error, success) => {
     if (error) {
-        console.error('SMTP connection error details:', {
+        console.warn('SMTP connection error details (Email functionality disabled):', {
             error: error.message,
             code: error.code,
             command: error.command,
             responseCode: error.responseCode,
             response: error.response
         });
+        console.warn('To enable email functionality, set EMAIL_USER and EMAIL_PASSWORD environment variables');
     } else {
         console.log('SMTP connection successful');
     }
@@ -40,6 +41,14 @@ const otpStore = new Map();
 const sendOTP = async (email, otp) => {
     try {
         console.log('Attempting to send OTP email to:', email);
+        
+        // Check if email credentials are available
+        if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD || 
+            process.env.EMAIL_USER === 'demo@example.com') {
+            console.warn('Email credentials not configured. OTP will be logged to console instead.');
+            console.log(`OTP for ${email}: ${otp}`);
+            return true; // Return success to allow development without email
+        }
         
         const mailOptions = {
             from: {
@@ -67,6 +76,13 @@ const sendOTP = async (email, otp) => {
             responseCode: error.responseCode,
             response: error.response
         });
+        
+        // In development, log the OTP instead of failing
+        if (process.env.NODE_ENV === 'development') {
+            console.log(`Development mode: OTP for ${email}: ${otp}`);
+            return true;
+        }
+        
         throw new Error('Failed to send OTP email: ' + error.message);
     }
 };

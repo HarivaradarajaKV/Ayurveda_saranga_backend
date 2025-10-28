@@ -318,7 +318,12 @@ router.get('/', auth, async (req, res) => {
             LEFT JOIN order_items oi ON o.id = oi.order_id
             LEFT JOIN products p ON oi.product_id = p.id
             WHERE o.user_id = $1 AND (o.is_temporary = false OR o.is_temporary IS NULL)
-            GROUP BY o.id
+            GROUP BY o.id, o.user_id, o.total_amount, o.status, o.shipping_address_line1, 
+                     o.shipping_address_line2, o.shipping_city, o.shipping_state, 
+                     o.shipping_postal_code, o.shipping_country, o.shipping_full_name, 
+                     o.shipping_phone_number, o.created_at, o.updated_at, o.payment_method, 
+                     o.payment_method_type, o.payment_status, o.delivery_charge, 
+                     o.discount_amount, o.is_temporary, o.payment_id, o.razorpay_order_id
             ORDER BY o.created_at DESC`,
             [req.user.id]
         );
@@ -359,7 +364,12 @@ router.get('/:id', auth, async (req, res) => {
             LEFT JOIN order_items oi ON o.id = oi.order_id
             LEFT JOIN products p ON oi.product_id = p.id
             WHERE o.id = $1 AND o.user_id = $2 AND (o.is_temporary = false OR o.is_temporary IS NULL)
-            GROUP BY o.id`,
+            GROUP BY o.id, o.user_id, o.total_amount, o.status, o.shipping_address_line1, 
+                     o.shipping_address_line2, o.shipping_city, o.shipping_state, 
+                     o.shipping_postal_code, o.shipping_country, o.shipping_full_name, 
+                     o.shipping_phone_number, o.created_at, o.updated_at, o.payment_method, 
+                     o.payment_method_type, o.payment_status, o.delivery_charge, 
+                     o.discount_amount, o.is_temporary, o.payment_id, o.razorpay_order_id`,
             [id, req.user.id]
         );
 

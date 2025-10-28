@@ -12,9 +12,11 @@ const pool = new Pool(
               family: 4,
               max: 20,
               idleTimeoutMillis: 300000,
-              connectionTimeoutMillis: 10000,
+              connectionTimeoutMillis: 30000, // Increased timeout
               keepAlive: true,
-              keepAliveInitialDelayMillis: 10000
+              keepAliveInitialDelayMillis: 10000,
+              retryDelayMillis: 5000, // Add retry delay
+              retryAttempts: 3 // Add retry attempts
           }
         : {
               user: process.env.DB_USER,
@@ -22,9 +24,7 @@ const pool = new Pool(
               host: process.env.DB_HOST,
               port: process.env.DB_PORT,
               database: process.env.DB_NAME,
-              ssl: {
-                  rejectUnauthorized: false
-              },
+              ssl: false, // Disable SSL for local development
               // Force IPv4
               family: 4,
               max: 20,

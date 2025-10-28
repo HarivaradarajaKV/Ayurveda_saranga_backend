@@ -144,7 +144,12 @@ router.get('/orders', adminAuth, async (req, res) => {
             JOIN users u ON o.user_id = u.id
             JOIN order_items oi ON o.id = oi.order_id
             JOIN products p ON oi.product_id = p.id
-            GROUP BY o.id, u.name, u.email
+            GROUP BY o.id, o.user_id, o.total_amount, o.status, o.shipping_address_line1, 
+                     o.shipping_address_line2, o.shipping_city, o.shipping_state, 
+                     o.shipping_postal_code, o.shipping_country, o.shipping_full_name, 
+                     o.shipping_phone_number, o.created_at, o.updated_at, o.payment_method, 
+                     o.payment_method_type, o.payment_status, o.delivery_charge, 
+                     o.discount_amount, o.is_temporary, u.name, u.email
             ORDER BY o.created_at DESC
         `);
         
