@@ -32,7 +32,9 @@ router.post('/create-order', auth, async (req, res) => {
             id: order.id,
             amount: order.amount,
             currency: order.currency,
-            key: process.env.RAZORPAY_KEY_ID
+            // Expose both for compatibility; frontend may read either
+            key: process.env.RAZORPAY_KEY_ID,
+            key_id: process.env.RAZORPAY_KEY_ID
         });
     } catch (error) {
         console.error('Error creating Razorpay order:', error);

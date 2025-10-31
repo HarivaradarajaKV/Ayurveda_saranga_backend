@@ -133,6 +133,10 @@ router.get('/orders', adminAuth, async (req, res) => {
         const orders = await pool.query(`
             SELECT 
                 o.*,
+                CASE 
+                    WHEN LOWER(o.payment_method) = 'cod' OR LOWER(o.payment_method_type) = 'cod' THEN 'Cash on Delivery'
+                    ELSE 'Online Payment'
+                END as payment_method_display,
                 o.shipping_postal_code AS shipping_pincode,
                 u.name as user_name,
                 u.email as user_email,
@@ -229,6 +233,10 @@ router.get('/orders/export', adminAuth, async (req, res) => {
                 o.created_at,
                 o.updated_at,
                 o.payment_method,
+                CASE 
+                    WHEN LOWER(o.payment_method) = 'cod' OR LOWER(o.payment_method_type) = 'cod' THEN 'Cash on Delivery'
+                    ELSE 'Online Payment'
+                END as payment_method_display,
                 o.delivery_charge,
                 o.discount_amount,
                 o.shipping_full_name,
@@ -291,6 +299,9 @@ router.get('/orders/export', adminAuth, async (req, res) => {
                 doc.fontSize(14).text(`Order #${order.id}`);
             }
             doc.fontSize(11).fillColor('#333333').text(`Status: ${order.status}`);
+            // Payment method
+            const paymentDisplay = order.payment_method_display || ((order.payment_method || '').toLowerCase() === 'cod' ? 'Cash on Delivery' : 'Online Payment');
+            doc.text(`Payment: ${paymentDisplay}`);
 
             // Sanitize helper for string values possibly containing 'null'/'undefined'
             const sanitize = (v) => {

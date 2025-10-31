@@ -111,6 +111,16 @@ router.post('/', auth, async (req, res) => {
 
                 const razorpayOrder = await razorpayResponse.json();
 
+                // Persist Razorpay order id for later verification and reference
+                try {
+                    await pool.query(
+                        'UPDATE orders SET razorpay_order_id = $1 WHERE id = $2',
+                        [razorpayOrder.id, order_id]
+                    );
+                } catch (e) {
+                    console.warn('Failed to persist razorpay_order_id:', e?.message || e);
+                }
+
                 return res.json({
                     message: 'Order initiated',
                     order: {
