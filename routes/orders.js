@@ -97,7 +97,9 @@ router.post('/', auth, async (req, res) => {
                 const hostHeader = req.headers['x-forwarded-host'] || req.get('host');
                 const protocol = (protoHeader && Array.isArray(protoHeader) ? protoHeader[0] : protoHeader) || req.protocol || 'https';
                 const host = (hostHeader && Array.isArray(hostHeader) ? hostHeader[0] : hostHeader);
-                const baseUrl = process.env.BACKEND_URL || (host ? `${protocol}://${host}` : '');
+                const envBase = process.env.BACKEND_URL || '';
+                const isLocalEnv = /localhost|127\.0\.0\.1/.test(envBase);
+                const baseUrl = (!envBase || isLocalEnv) && host ? `${protocol}://${host}` : envBase;
 
                 const razorpayResponse = await fetch(`${baseUrl}/api/razorpay/create-order`, {
                     method: 'POST',
