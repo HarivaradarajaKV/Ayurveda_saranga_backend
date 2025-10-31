@@ -589,9 +589,9 @@ router.post('/:id/reviews', auth, async (req, res) => {
             return res.status(400).json({ error: 'You have already reviewed this product' });
         }
 
-        // Add the review
+        // Add the review with IST timestamp
         const newReview = await pool.query(
-            'INSERT INTO reviews (user_id, product_id, rating, comment) VALUES ($1, $2, $3, $4) RETURNING *',
+            "INSERT INTO reviews (user_id, product_id, rating, comment, created_at) VALUES ($1, $2, $3, $4, (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')) RETURNING *",
             [user_id, id, rating, comment]
         );
 

@@ -37,8 +37,10 @@ router.post('/', auth, async (req, res) => {
                         payment_method,
                         payment_method_type,
                         payment_status,
-                        is_temporary
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+                        is_temporary,
+                        delivery_charge,
+                        discount_amount
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
                     [
                         user_id,
                         total_amount || 0,
@@ -54,22 +56,37 @@ router.post('/', auth, async (req, res) => {
                         'online',
                         'online',
                         'pending',
-                        true
+                        true,
+                        req.body.delivery_charge || 0,
+                        req.body.discount_amount || 0
                     ]
                 );
                 const order_id = orderResult.rows[0].id;
+                // Normalize timestamps to IST
+                await client.query(
+                    "UPDATE orders SET created_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'), updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') WHERE id = $1",
+                    [order_id]
+                );
 
                 // Insert order items
                 for (const item of items) {
-                    const productResult = await client.query(
-                        'SELECT price FROM products WHERE id = $1',
-                        [item.product_id]
-                    );
-                    const price = productResult.rows[0].price;
+                    // Prefer client-provided effective price (already discounted in checkout)
+                    let priceAtTime = Number(item.price);
+                    if (!isFinite(priceAtTime) || priceAtTime <= 0) {
+                        // Fallback to product price minus offer percentage if available
+                        const productResult = await client.query(
+                            'SELECT price, offer_percentage FROM products WHERE id = $1',
+                            [item.product_id]
+                        );
+                        const dbRow = productResult.rows[0] || { price: 0, offer_percentage: 0 };
+                        const offerPct = Number(dbRow.offer_percentage || 0);
+                        const basePrice = Number(dbRow.price || 0);
+                        priceAtTime = basePrice * (1 - (offerPct / 100));
+                    }
 
                     await client.query(
                         'INSERT INTO order_items (order_id, product_id, quantity, price_at_time) VALUES ($1, $2, $3, $4)',
-                        [order_id, item.product_id, item.quantity, price]
+                        [order_id, item.product_id, item.quantity, priceAtTime]
                     );
                 }
 
@@ -123,8 +140,10 @@ router.post('/', auth, async (req, res) => {
                         payment_method,
                         payment_method_type,
                         payment_status,
-                        is_temporary
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+                        is_temporary,
+                        delivery_charge,
+                        discount_amount
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
                     [
                         user_id,
                         total_amount || 0,
@@ -140,22 +159,36 @@ router.post('/', auth, async (req, res) => {
                         'cod',
                         'cod',
                         'pending',
-                        false
+                        false,
+                        req.body.delivery_charge || 0,
+                        req.body.discount_amount || 0
                     ]
                 );
                 const order_id = orderResult.rows[0].id;
+                // Normalize timestamps to IST
+                await client.query(
+                    "UPDATE orders SET created_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'), updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') WHERE id = $1",
+                    [order_id]
+                );
 
                 // Insert order items and update stock
                 for (const item of items) {
-                    const productResult = await client.query(
-                        'SELECT price FROM products WHERE id = $1',
-                        [item.product_id]
-                    );
-                    const price = productResult.rows[0].price;
+                    // Prefer client-provided effective price
+                    let priceAtTime = Number(item.price);
+                    if (!isFinite(priceAtTime) || priceAtTime <= 0) {
+                        const productResult = await client.query(
+                            'SELECT price, offer_percentage FROM products WHERE id = $1',
+                            [item.product_id]
+                        );
+                        const dbRow = productResult.rows[0] || { price: 0, offer_percentage: 0 };
+                        const offerPct = Number(dbRow.offer_percentage || 0);
+                        const basePrice = Number(dbRow.price || 0);
+                        priceAtTime = basePrice * (1 - (offerPct / 100));
+                    }
 
                     await client.query(
                         'INSERT INTO order_items (order_id, product_id, quantity, price_at_time) VALUES ($1, $2, $3, $4)',
-                        [order_id, item.product_id, item.quantity, price]
+                        [order_id, item.product_id, item.quantity, priceAtTime]
                     );
 
                     // Update stock for COD orders
@@ -258,7 +291,7 @@ router.post('/:id/payment-success', auth, async (req, res) => {
 
             // Update order status and mark as permanent
             await client.query(
-                'UPDATE orders SET status = $1, payment_status = $2, payment_id = $3, is_temporary = false, payment_method = $4, payment_method_type = $4 WHERE id = $5',
+                "UPDATE orders SET status = $1, payment_status = $2, payment_id = $3, is_temporary = false, payment_method = $4, payment_method_type = $4, updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') WHERE id = $5",
                 ['confirmed', 'paid', razorpay_payment_id, 'online', id]
             );
 

@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { adminAuth } = require('../middleware/auth');
+const PDFDocument = require('pdfkit');
 
 // Get dashboard statistics
 router.get('/stats', adminAuth, async (req, res) => {
@@ -132,6 +133,7 @@ router.get('/orders', adminAuth, async (req, res) => {
         const orders = await pool.query(`
             SELECT 
                 o.*,
+                o.shipping_postal_code AS shipping_pincode,
                 u.name as user_name,
                 u.email as user_email,
                 json_agg(json_build_object(
@@ -156,6 +158,205 @@ router.get('/orders', adminAuth, async (req, res) => {
         res.json(orders.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Get all product reviews with product and user info
+router.get('/reviews', adminAuth, async (req, res) => {
+    try {
+        const reviews = await pool.query(`
+            SELECT 
+                r.id,
+                r.rating,
+                r.comment,
+                r.created_at,
+                u.id AS user_id,
+                u.name AS user_name,
+                p.id AS product_id,
+                p.name AS product_name
+            FROM reviews r
+            JOIN users u ON r.user_id = u.id
+            JOIN products p ON r.product_id = p.id
+            ORDER BY r.created_at DESC
+        `);
+        res.json(reviews.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete a product review
+router.delete('/reviews/:id', adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const deleted = await pool.query('DELETE FROM reviews WHERE id = $1 RETURNING id', [id]);
+        if (deleted.rows.length === 0) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Export orders as PDF filtered by date range
+router.get('/orders/export', adminAuth, async (req, res) => {
+    try {
+        const { start, end } = req.query;
+
+        // Validate and build date filter
+        let dateFilter = '';
+        const params = [];
+        let paramIndex = 1;
+
+        if (start) {
+            dateFilter += ` AND o.created_at::date >= $${paramIndex}::date`;
+            params.push(start);
+            paramIndex++;
+        }
+        if (end) {
+            dateFilter += ` AND o.created_at::date <= $${paramIndex}::date`;
+            params.push(end);
+            paramIndex++;
+        }
+
+        const query = `
+            SELECT 
+                o.id,
+                o.user_id,
+                o.total_amount,
+                o.status,
+                o.created_at,
+                o.updated_at,
+                o.payment_method,
+                o.delivery_charge,
+                o.discount_amount,
+                o.shipping_full_name,
+                o.shipping_phone_number,
+                o.shipping_address_line1,
+                o.shipping_address_line2,
+                o.shipping_city,
+                o.shipping_state,
+                o.shipping_postal_code,
+                json_agg(json_build_object(
+                    'product_id', p.id,
+                    'product_name', p.name,
+                    'quantity', oi.quantity,
+                    'price_at_time', oi.price_at_time
+                ) ORDER BY oi.id) AS items
+            FROM orders o
+            JOIN order_items oi ON o.id = oi.order_id
+            JOIN products p ON oi.product_id = p.id
+            WHERE 1=1 ${dateFilter}
+            GROUP BY o.id
+            ORDER BY o.created_at DESC
+        `;
+
+        const result = await pool.query(query, params);
+        const orders = result.rows;
+
+        // Setup PDF response headers
+        const filename = `orders_${(start || 'all')}_${(end || 'all')}.pdf`;
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+        // Create PDF document and pipe to response
+        const doc = new PDFDocument({ margin: 40, size: 'A4' });
+        doc.pipe(res);
+
+        // Title
+        doc.fontSize(18).text('Orders Report', { align: 'center' });
+        const dateRangeText = `Date range: ${start || 'All'} to ${end || 'All'}`;
+        doc.moveDown(0.5).fontSize(10).fillColor('#555555').text(dateRangeText, { align: 'center' });
+        doc.moveDown(1).fillColor('#000000');
+
+        // Summary
+        const totalOrders = orders.length;
+        const totalRevenue = orders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+        doc.fontSize(12).text(`Total orders: ${totalOrders}`);
+        doc.text(`Total revenue (subtotal): ₹${totalRevenue.toFixed(2)}`);
+        doc.moveDown(0.5);
+
+        // Divider
+        doc.moveTo(doc.x, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor('#cccccc').stroke();
+        doc.moveDown(0.5).strokeColor('#000000');
+
+        // Orders detail
+        orders.forEach((order, idx) => {
+            doc.moveDown(0.5);
+            try {
+                const createdAtIst = new Date(order.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true });
+                doc.fontSize(14).text(`Order #${order.id}  -  ${createdAtIst}`);
+            } catch (e) {
+                doc.fontSize(14).text(`Order #${order.id}`);
+            }
+            doc.fontSize(11).fillColor('#333333').text(`Status: ${order.status}`);
+
+            // Sanitize helper for string values possibly containing 'null'/'undefined'
+            const sanitize = (v) => {
+                if (v === null || v === undefined) return null;
+                const s = String(v);
+                if (!s) return null;
+                const lower = s.toLowerCase();
+                if (lower === 'null' || lower === 'undefined') return null;
+                return s;
+            };
+
+            const fullName = sanitize(order.shipping_full_name);
+            const phone = sanitize(order.shipping_phone_number);
+            if (fullName || phone) {
+                const customerLine = fullName && phone ? `${fullName} (${phone})` : (fullName || phone);
+                doc.text(`Customer: ${customerLine}`);
+            }
+
+            const line1 = sanitize(order.shipping_address_line1);
+            const line2 = sanitize(order.shipping_address_line2);
+            const city = sanitize(order.shipping_city);
+            const state = sanitize(order.shipping_state);
+            const postal = sanitize(order.shipping_postal_code || order.shipping_pincode);
+
+            const cityState = [city, state].filter(Boolean).join(', ');
+            const addressParts = [line1, line2, cityState || null, postal ? `- ${postal}` : null].filter(Boolean);
+            const addressText = addressParts.join(', ');
+            if (addressText) {
+                doc.text(`Address: ${addressText}`);
+            }
+
+            // Items table-like layout
+            doc.moveDown(0.3).fillColor('#000000').fontSize(11).text('Items:');
+            doc.moveDown(0.2);
+            doc.fontSize(10);
+            const items = Array.isArray(order.items) ? order.items : [];
+            let itemsSubtotal = 0;
+            items.forEach((item) => {
+                const line = `${item.product_name}  x${item.quantity}  —  ₹${(Number(item.price_at_time) * Number(item.quantity)).toFixed(2)}`;
+                doc.text(line, { indent: 12 });
+                itemsSubtotal += Number(item.price_at_time) * Number(item.quantity);
+            });
+
+            const delivery = Number(order.delivery_charge || 0);
+            const discount = Number(order.discount_amount || 0);
+            const subtotal = itemsSubtotal || Number(order.total_amount || 0);
+            const grandTotal = subtotal + delivery - discount;
+
+            doc.moveDown(0.3);
+            doc.fontSize(10).fillColor('#333333').text(`Items Subtotal: ₹${subtotal.toFixed(2)}`);
+            if (discount) doc.text(`Discount: -₹${discount.toFixed(2)}`);
+            if (delivery) doc.text(`Delivery: ₹${delivery.toFixed(2)}`);
+            doc.fillColor('#000000').fontSize(11).text(`Total Amount: ₹${grandTotal.toFixed(2)}`);
+
+            // Section divider
+            if (idx < orders.length - 1) {
+                doc.moveDown(0.5);
+                doc.moveTo(doc.x, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor('#e0e0e0').stroke();
+                doc.strokeColor('#000000');
+            }
+        });
+
+        doc.end();
+    } catch (error) {
+        console.error('Error exporting orders PDF:', error);
+        res.status(500).json({ error: 'Failed to generate PDF' });
     }
 });
 

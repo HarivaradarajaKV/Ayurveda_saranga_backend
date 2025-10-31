@@ -87,9 +87,9 @@ router.post('/', auth, async (req, res) => {
             return res.status(400).json({ error: 'You have already submitted a brand review' });
         }
 
-        // Add the review
+        // Add the review with IST timestamp
         const newReview = await pool.query(
-            'INSERT INTO brand_reviews (user_id, rating, comment) VALUES ($1, $2, $3) RETURNING *',
+            "INSERT INTO brand_reviews (user_id, rating, comment, created_at) VALUES ($1, $2, $3, (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')) RETURNING *",
             [user_id, rating, comment]
         );
 
@@ -128,9 +128,9 @@ router.put('/', auth, async (req, res) => {
             return res.status(404).json({ error: 'Review not found' });
         }
 
-        // Update the review
+        // Update the review with IST timestamp
         const updatedReview = await pool.query(
-            'UPDATE brand_reviews SET rating = $1, comment = $2 WHERE user_id = $3 RETURNING *',
+            "UPDATE brand_reviews SET rating = $1, comment = $2, updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') WHERE user_id = $3 RETURNING *",
             [rating, comment, user_id]
         );
 
