@@ -92,8 +92,14 @@ router.post('/', auth, async (req, res) => {
 
                 await client.query('COMMIT');
 
-                // Create Razorpay order
-                const razorpayResponse = await fetch(`${process.env.BACKEND_URL}/api/razorpay/create-order`, {
+                // Create Razorpay order (work both locally and on Vercel)
+                const protoHeader = req.headers['x-forwarded-proto'];
+                const hostHeader = req.headers['x-forwarded-host'] || req.get('host');
+                const protocol = (protoHeader && Array.isArray(protoHeader) ? protoHeader[0] : protoHeader) || req.protocol || 'https';
+                const host = (hostHeader && Array.isArray(hostHeader) ? hostHeader[0] : hostHeader);
+                const baseUrl = process.env.BACKEND_URL || (host ? `${protocol}://${host}` : '');
+
+                const razorpayResponse = await fetch(`${baseUrl}/api/razorpay/create-order`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

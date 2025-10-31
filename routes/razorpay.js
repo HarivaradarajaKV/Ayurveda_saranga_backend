@@ -56,8 +56,14 @@ router.post('/verify-payment', auth, async (req, res) => {
             .digest('hex');
 
         if (generated_signature === razorpay_signature) {
-            // Forward the request to the order payment success endpoint
-            const response = await fetch(`${process.env.BACKEND_URL}/api/orders/${order_id}/payment-success`, {
+            // Forward the request to the order payment success endpoint (support local and Vercel)
+            const protoHeader = req.headers['x-forwarded-proto'];
+            const hostHeader = req.headers['x-forwarded-host'] || req.get('host');
+            const protocol = (protoHeader && Array.isArray(protoHeader) ? protoHeader[0] : protoHeader) || req.protocol || 'https';
+            const host = (hostHeader && Array.isArray(hostHeader) ? hostHeader[0] : hostHeader);
+            const baseUrl = process.env.BACKEND_URL || (host ? `${protocol}://${host}` : '');
+
+            const response = await fetch(`${baseUrl}/api/orders/${order_id}/payment-success`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
