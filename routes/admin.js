@@ -2,6 +2,7 @@ const router = require('express').Router();
 const pool = require('../db');
 const { adminAuth } = require('../middleware/auth');
 const PDFDocument = require('pdfkit');
+const combosRouter = require('./combos');
 
 // Get dashboard statistics
 router.get('/stats', adminAuth, async (req, res) => {

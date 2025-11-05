@@ -88,6 +88,7 @@ const couponsRouter = require('./routes/coupons');
 const paymentsRouter = require('./routes/payments');
 const ordersRouter = require('./routes/orders');
 const razorpayRouter = require('./routes/razorpay');
+const combosRouter = require('./routes/combos');
 
 app.use('/api/auth', authRouter);
 app.use('/api/products', productsRouter);
@@ -97,6 +98,8 @@ app.use('/api/brand-reviews', brandReviewsRouter);
 app.use('/api/coupons', couponsRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/razorpay', razorpayRouter);
+app.use('/api/combos', combosRouter);
+app.use('/api/admin/combos', combosRouter);
 
 app.use('/api/cart', require('./routes/cart'));
 app.use('/api/admin', require('./routes/admin'));

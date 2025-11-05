@@ -6,7 +6,7 @@ const { auth } = require('../middleware/auth');
 router.get('/', auth, async (req, res) => {
     try {
         const cart = await pool.query(
-            'SELECT c.*, p.name, p.price, p.image_url FROM cart c JOIN products p ON c.product_id = p.id WHERE c.user_id = $1',
+            'SELECT c.*, p.name, p.price, p.image_url, p.offer_percentage, p.description, p.category, p.stock_quantity FROM cart c JOIN products p ON c.product_id = p.id WHERE c.user_id = $1',
             [req.user.id]
         );
         res.json(cart.rows);
