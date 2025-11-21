@@ -4,10 +4,18 @@ const Razorpay = require('razorpay');
 const { auth } = require('../middleware/auth');
 const pool = require('../db');
 
+// Prefer environment variables but fall back to provided live credentials so payments keep working
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_live_RhzLf3BDT0rwrF';
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || 'sFPjLlXXCGcreC1NifHOakJh';
+
+if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    console.warn('[RAZORPAY] Missing env vars; using embedded live credentials. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in the environment for better security.');
+}
+
 // Initialize Razorpay
 const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET
+    key_id: RAZORPAY_KEY_ID,
+    key_secret: RAZORPAY_KEY_SECRET
 });
 
 // Create a Razorpay order
@@ -33,8 +41,8 @@ router.post('/create-order', auth, async (req, res) => {
             amount: order.amount,
             currency: order.currency,
             // Expose both for compatibility; frontend may read either
-            key: process.env.RAZORPAY_KEY_ID,
-            key_id: process.env.RAZORPAY_KEY_ID
+            key: RAZORPAY_KEY_ID,
+            key_id: RAZORPAY_KEY_ID
         });
     } catch (error) {
         console.error('Error creating Razorpay order:', error);
@@ -49,7 +57,7 @@ router.post('/verify-payment', auth, async (req, res) => {
         
         // Verify the payment signature
         const crypto = require('crypto');
-        const secret = process.env.RAZORPAY_KEY_SECRET;
+        const secret = RAZORPAY_KEY_SECRET;
         const generated_signature = crypto
             .createHmac('sha256', secret)
             .update(razorpay_order_id + '|' + razorpay_payment_id)
