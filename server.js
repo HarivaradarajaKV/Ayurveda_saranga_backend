@@ -37,8 +37,19 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve uploaded files with cache headers for better performance
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+    maxAge: '1y', // Cache for 1 year
+    etag: true, // Enable ETag for cache validation
+    lastModified: true, // Enable Last-Modified headers
+    setHeaders: (res, path) => {
+        // Set cache headers for image files
+        if (path.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+            res.setHeader('Expires', new Date(Date.now() + 31536000000).toUTCString());
+        }
+    }
+}));
 
 // Ensure uploads directory exists
 const uploadDir = path.join(__dirname, 'uploads', 'profile-photos');
