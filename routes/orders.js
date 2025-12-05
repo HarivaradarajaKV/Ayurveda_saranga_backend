@@ -19,6 +19,67 @@ router.post('/', auth, async (req, res) => {
         try {
             await client.query('BEGIN');
 
+            // Map product-level GST rates
+            const productIds = items.map((i) => i.product_id).filter(Boolean);
+            const gstMap = new Map();
+            if (productIds.length > 0) {
+                const gstRows = await client.query(
+                    `SELECT product_id, percentage 
+                     FROM product_gst_rates 
+                     WHERE product_id = ANY($1) AND is_active = true`,
+                    [productIds]
+                );
+                gstRows.rows.forEach((row) => {
+                    gstMap.set(Number(row.product_id), Number(row.percentage || 0));
+                });
+            }
+
+            const discountAmount = Number(req.body.discount_amount || 0);
+            const deliveryCharge = Number(req.body.delivery_charge || 0);
+
+            const computedItems = [];
+            let itemsSubtotal = 0;
+            let totalGstAmount = 0;
+
+            // Pre-compute prices and GST per item to keep order totals consistent
+            for (const item of items) {
+                // Prefer client-provided effective price (already discounted in checkout)
+                let priceAtTime = Number(item.price);
+                if (!isFinite(priceAtTime) || priceAtTime <= 0) {
+                    // Fallback to product price minus offer percentage if available
+                    const productResult = await client.query(
+                        'SELECT price, offer_percentage FROM products WHERE id = $1',
+                        [item.product_id]
+                    );
+                    const dbRow = productResult.rows[0] || { price: 0, offer_percentage: 0 };
+                    const offerPct = Number(dbRow.offer_percentage || 0);
+                    const basePrice = Number(dbRow.price || 0);
+                    priceAtTime = basePrice * (1 - (offerPct / 100));
+                }
+
+                const gstPercentage = gstMap.get(Number(item.product_id)) || 0;
+                const gstAmount = Number((priceAtTime * Number(item.quantity || 0) * gstPercentage) / 100);
+
+                const lineTotal = priceAtTime * Number(item.quantity || 0);
+                itemsSubtotal += lineTotal;
+                totalGstAmount += gstAmount;
+
+                computedItems.push({
+                    ...item,
+                    priceAtTime,
+                    gstPercentage,
+                    gstAmount,
+                    lineTotal,
+                });
+            }
+
+            const subtotalAfterDiscount = itemsSubtotal - discountAmount;
+            const finalTotal = subtotalAfterDiscount + totalGstAmount + deliveryCharge;
+            // Aggregate GST percentage for order-level reference (weighted by line totals)
+            const aggregatedGstPercentage = itemsSubtotal > 0
+                ? Number(((totalGstAmount / itemsSubtotal) * 100).toFixed(2))
+                : 0;
+
             if (payment_method === 'online') {
                 // For online payment, create a temporary order first
                 const orderResult = await client.query(
@@ -39,11 +100,13 @@ router.post('/', auth, async (req, res) => {
                         payment_status,
                         is_temporary,
                         delivery_charge,
-                        discount_amount
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
+                        discount_amount,
+                        gst_percentage,
+                        gst_amount
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
                     [
                         user_id,
-                        total_amount || 0,
+                        finalTotal,
                         'pending_payment',
                         shipping_address.address_line1,
                         shipping_address.address_line2,
@@ -57,8 +120,10 @@ router.post('/', auth, async (req, res) => {
                         'online',
                         'pending',
                         true,
-                        req.body.delivery_charge || 0,
-                        req.body.discount_amount || 0
+                        deliveryCharge,
+                        discountAmount,
+                        aggregatedGstPercentage,
+                        totalGstAmount
                     ]
                 );
                 const order_id = orderResult.rows[0].id;
@@ -68,25 +133,11 @@ router.post('/', auth, async (req, res) => {
                     [order_id]
                 );
 
-                // Insert order items
-                for (const item of items) {
-                    // Prefer client-provided effective price (already discounted in checkout)
-                    let priceAtTime = Number(item.price);
-                    if (!isFinite(priceAtTime) || priceAtTime <= 0) {
-                        // Fallback to product price minus offer percentage if available
-                        const productResult = await client.query(
-                            'SELECT price, offer_percentage FROM products WHERE id = $1',
-                            [item.product_id]
-                        );
-                        const dbRow = productResult.rows[0] || { price: 0, offer_percentage: 0 };
-                        const offerPct = Number(dbRow.offer_percentage || 0);
-                        const basePrice = Number(dbRow.price || 0);
-                        priceAtTime = basePrice * (1 - (offerPct / 100));
-                    }
-
+                // Insert order items with GST snapshot
+                for (const item of computedItems) {
                     await client.query(
-                        'INSERT INTO order_items (order_id, product_id, quantity, price_at_time) VALUES ($1, $2, $3, $4)',
-                        [order_id, item.product_id, item.quantity, priceAtTime]
+                        'INSERT INTO order_items (order_id, product_id, quantity, price_at_time, gst_percentage, gst_amount) VALUES ($1, $2, $3, $4, $5, $6)',
+                        [order_id, item.product_id, item.quantity, item.priceAtTime, item.gstPercentage, item.gstAmount]
                     );
                 }
 
@@ -133,10 +184,12 @@ router.post('/', auth, async (req, res) => {
                     message: 'Order initiated',
                     order: {
                         id: order_id,
-                        total_amount: total_amount,
+                        total_amount: finalTotal,
                         status: 'pending_payment',
                         shipping_address,
                         payment_method,
+                        gst_percentage: aggregatedGstPercentage,
+                        gst_amount: totalGstAmount,
                         razorpay_order: razorpayOrder
                     }
                 });
@@ -160,11 +213,13 @@ router.post('/', auth, async (req, res) => {
                         payment_status,
                         is_temporary,
                         delivery_charge,
-                        discount_amount
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
+                        discount_amount,
+                        gst_percentage,
+                        gst_amount
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
                     [
                         user_id,
-                        total_amount || 0,
+                        finalTotal,
                         'pending',
                         shipping_address.address_line1,
                         shipping_address.address_line2,
@@ -178,8 +233,10 @@ router.post('/', auth, async (req, res) => {
                         'cod',
                         'pending',
                         false,
-                        req.body.delivery_charge || 0,
-                        req.body.discount_amount || 0
+                        deliveryCharge,
+                        discountAmount,
+                        aggregatedGstPercentage,
+                        totalGstAmount
                     ]
                 );
                 const order_id = orderResult.rows[0].id;
@@ -190,23 +247,10 @@ router.post('/', auth, async (req, res) => {
                 );
 
                 // Insert order items and update stock
-                for (const item of items) {
-                    // Prefer client-provided effective price
-                    let priceAtTime = Number(item.price);
-                    if (!isFinite(priceAtTime) || priceAtTime <= 0) {
-                        const productResult = await client.query(
-                            'SELECT price, offer_percentage FROM products WHERE id = $1',
-                            [item.product_id]
-                        );
-                        const dbRow = productResult.rows[0] || { price: 0, offer_percentage: 0 };
-                        const offerPct = Number(dbRow.offer_percentage || 0);
-                        const basePrice = Number(dbRow.price || 0);
-                        priceAtTime = basePrice * (1 - (offerPct / 100));
-                    }
-
+                for (const item of computedItems) {
                     await client.query(
-                        'INSERT INTO order_items (order_id, product_id, quantity, price_at_time) VALUES ($1, $2, $3, $4)',
-                        [order_id, item.product_id, item.quantity, priceAtTime]
+                        'INSERT INTO order_items (order_id, product_id, quantity, price_at_time, gst_percentage, gst_amount) VALUES ($1, $2, $3, $4, $5, $6)',
+                        [order_id, item.product_id, item.quantity, item.priceAtTime, item.gstPercentage, item.gstAmount]
                     );
 
                     // Update stock for COD orders
@@ -228,10 +272,12 @@ router.post('/', auth, async (req, res) => {
                     message: 'Order created successfully',
                     order: {
                         id: order_id,
-                        total_amount: total_amount,
+                        total_amount: finalTotal,
                         status: 'pending',
                         shipping_address,
-                        payment_method: 'cod'
+                        payment_method: 'cod',
+                        gst_percentage: aggregatedGstPercentage,
+                        gst_amount: totalGstAmount
                     }
                 });
             }
@@ -363,7 +409,9 @@ router.get('/', auth, async (req, res) => {
                 'product_id', oi.product_id,
                 'quantity', oi.quantity,
                 'price_at_time', oi.price_at_time,
-                'product_name', p.name
+                'product_name', p.name,
+                'gst_percentage', oi.gst_percentage,
+                'gst_amount', oi.gst_amount
             )) as items
             FROM orders o
             LEFT JOIN order_items oi ON o.id = oi.order_id
@@ -374,7 +422,8 @@ router.get('/', auth, async (req, res) => {
                      o.shipping_postal_code, o.shipping_country, o.shipping_full_name, 
                      o.shipping_phone_number, o.created_at, o.updated_at, o.payment_method, 
                      o.payment_method_type, o.payment_status, o.delivery_charge, 
-                     o.discount_amount, o.is_temporary, o.payment_id, o.razorpay_order_id
+                     o.discount_amount, o.is_temporary, o.payment_id, o.razorpay_order_id,
+                     o.gst_percentage, o.gst_amount
             ORDER BY o.created_at DESC`,
             [req.user.id]
         );
@@ -409,7 +458,9 @@ router.get('/:id', auth, async (req, res) => {
                 'product_id', oi.product_id,
                 'quantity', oi.quantity,
                 'price_at_time', oi.price_at_time,
-                'product_name', p.name
+                'product_name', p.name,
+                'gst_percentage', oi.gst_percentage,
+                'gst_amount', oi.gst_amount
             )) as items
             FROM orders o
             LEFT JOIN order_items oi ON o.id = oi.order_id
@@ -420,7 +471,8 @@ router.get('/:id', auth, async (req, res) => {
                      o.shipping_postal_code, o.shipping_country, o.shipping_full_name, 
                      o.shipping_phone_number, o.created_at, o.updated_at, o.payment_method, 
                      o.payment_method_type, o.payment_status, o.delivery_charge, 
-                     o.discount_amount, o.is_temporary, o.payment_id, o.razorpay_order_id`,
+                     o.discount_amount, o.is_temporary, o.payment_id, o.razorpay_order_id,
+                     o.gst_percentage, o.gst_amount`,
             [id, req.user.id]
         );
 

@@ -100,6 +100,7 @@ const paymentsRouter = require('./routes/payments');
 const ordersRouter = require('./routes/orders');
 const razorpayRouter = require('./routes/razorpay');
 const combosRouter = require('./routes/combos');
+const gstRouter = require('./routes/gst');
 
 app.use('/api/auth', authRouter);
 app.use('/api/products', productsRouter);
@@ -114,6 +115,7 @@ app.use('/api/admin/combos', combosRouter);
 
 app.use('/api/cart', require('./routes/cart'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/gst', gstRouter);
 app.use('/api/orders', require('./routes/orders'));
 app.use('/api/wishlist', require('./routes/wishlist'));
 app.use('/api/users', require('./routes/users'));
