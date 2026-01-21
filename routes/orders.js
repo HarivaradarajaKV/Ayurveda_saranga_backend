@@ -74,7 +74,8 @@ router.post('/', auth, async (req, res) => {
             }
 
             const subtotalAfterDiscount = itemsSubtotal - discountAmount;
-            const finalTotal = subtotalAfterDiscount + totalGstAmount + deliveryCharge;
+            // GST is already included in item prices (priceAtTime), so don't add it again
+            const finalTotal = subtotalAfterDiscount + deliveryCharge;
             // Aggregate GST percentage for order-level reference (weighted by line totals)
             const aggregatedGstPercentage = itemsSubtotal > 0
                 ? Number(((totalGstAmount / itemsSubtotal) * 100).toFixed(2))
@@ -298,7 +299,7 @@ router.post('/:id/cancel-payment', auth, async (req, res) => {
     try {
         const { id } = req.params;
         const client = await pool.connect();
-        
+
         try {
             await client.query('BEGIN');
 
@@ -338,7 +339,7 @@ router.post('/:id/payment-success', auth, async (req, res) => {
     try {
         const { id } = req.params;
         const { razorpay_payment_id, razorpay_order_id } = req.body;
-        
+
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -427,7 +428,7 @@ router.get('/', auth, async (req, res) => {
             ORDER BY o.created_at DESC`,
             [req.user.id]
         );
-        
+
         // Log the payment methods for debugging
         console.log('Orders payment methods:', orders.rows.map(order => ({
             id: order.id,
@@ -435,7 +436,7 @@ router.get('/', auth, async (req, res) => {
             payment_method_type: order.payment_method_type,
             display: order.payment_method_display
         })));
-        
+
         res.json(orders.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });

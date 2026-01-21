@@ -14,7 +14,7 @@ router.get('/stats', adminAuth, async (req, res) => {
                 (SELECT COUNT(*) FROM orders) as total_orders,
                 COALESCE((SELECT SUM(total_amount) FROM orders), 0) as total_revenue
         `);
-        
+
         res.json(stats.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -33,7 +33,7 @@ router.get('/users', adminAuth, async (req, res) => {
             WHERE role != 'admin'
             ORDER BY created_at DESC
         `);
-        
+
         res.json(users.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -43,7 +43,7 @@ router.get('/users', adminAuth, async (req, res) => {
 // Get all products with inventory
 router.get('/products', adminAuth, async (req, res) => {
     try {
-        const { 
+        const {
             category_id,
             search,
             priceMin,
@@ -120,7 +120,7 @@ router.get('/products', adminAuth, async (req, res) => {
         query += ` GROUP BY p.id, c.name ORDER BY p.created_at DESC`;
 
         const products = await pool.query(query, queryParams);
-        
+
         res.json({ products: products.rows });
     } catch (error) {
         console.error('Error in admin products route:', error);
@@ -128,7 +128,6 @@ router.get('/products', adminAuth, async (req, res) => {
     }
 });
 
-// Get all orders with details
 router.get('/orders', adminAuth, async (req, res) => {
     try {
         const orders = await pool.query(`
@@ -151,15 +150,10 @@ router.get('/orders', adminAuth, async (req, res) => {
             JOIN users u ON o.user_id = u.id
             JOIN order_items oi ON o.id = oi.order_id
             JOIN products p ON oi.product_id = p.id
-            GROUP BY o.id, o.user_id, o.total_amount, o.status, o.shipping_address_line1, 
-                     o.shipping_address_line2, o.shipping_city, o.shipping_state, 
-                     o.shipping_postal_code, o.shipping_country, o.shipping_full_name, 
-                     o.shipping_phone_number, o.created_at, o.updated_at, o.payment_method, 
-                     o.payment_method_type, o.payment_status, o.delivery_charge, 
-                     o.discount_amount, o.is_temporary, u.name, u.email
+            GROUP BY o.id, u.name, u.email
             ORDER BY o.created_at DESC
         `);
-        
+
         res.json(orders.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -394,7 +388,7 @@ router.get('/analytics/products', adminAuth, async (req, res) => {
             GROUP BY p.id
             ORDER BY total_revenue DESC
         `);
-        
+
         res.json(analytics.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -406,28 +400,28 @@ router.put('/orders/:id/status', adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
-        
+
         const validStatuses = ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'];
         if (!validStatuses.includes(status)) {
-            return res.status(400).json({ 
-                error: `Invalid status. Status must be one of: ${validStatuses.join(', ')}` 
+            return res.status(400).json({
+                error: `Invalid status. Status must be one of: ${validStatuses.join(', ')}`
             });
         }
-        
+
         const updatedOrder = await pool.query(
             'UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
             [status, id]
         );
-        
+
         if (updatedOrder.rows.length === 0) {
             return res.status(404).json({ error: 'Order not found. Please check the order ID and try again.' });
         }
-        
+
         res.json(updatedOrder.rows[0]);
     } catch (error) {
         console.error('Error updating order status:', error);
-        res.status(500).json({ 
-            error: 'Unable to update order status. Please try again later.' 
+        res.status(500).json({
+            error: 'Unable to update order status. Please try again later.'
         });
     }
 });
@@ -446,7 +440,7 @@ router.get('/categories', adminAuth, async (req, res) => {
             GROUP BY c.id, p.name
             ORDER BY c.name
         `);
-        
+
         res.json(categories.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -457,22 +451,22 @@ router.get('/categories', adminAuth, async (req, res) => {
 router.post('/categories', adminAuth, async (req, res) => {
     try {
         const { name, description, parent_id, image_url } = req.body;
-        
+
         // Check if category name already exists
         const existingCategory = await pool.query(
             'SELECT id FROM categories WHERE LOWER(name) = LOWER($1)',
             [name]
         );
-        
+
         if (existingCategory.rows.length > 0) {
             return res.status(400).json({ error: 'Category name already exists' });
         }
-        
+
         const newCategory = await pool.query(
             'INSERT INTO categories (name, description, parent_id, image_url) VALUES ($1, $2, $3, $4) RETURNING *',
             [name, description, parent_id, image_url]
         );
-        
+
         res.status(201).json(newCategory.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -484,19 +478,19 @@ router.put('/categories/:id', adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const { name, description, parent_id, image_url } = req.body;
-        
+
         // Check if new name conflicts with existing categories
         if (name) {
             const existingCategory = await pool.query(
                 'SELECT id FROM categories WHERE LOWER(name) = LOWER($1) AND id != $2',
                 [name, id]
             );
-            
+
             if (existingCategory.rows.length > 0) {
                 return res.status(400).json({ error: 'Category name already exists' });
             }
         }
-        
+
         const updatedCategory = await pool.query(`
             UPDATE categories 
             SET 
@@ -507,11 +501,11 @@ router.put('/categories/:id', adminAuth, async (req, res) => {
             WHERE id = $5 
             RETURNING *
         `, [name, description, parent_id, image_url, id]);
-        
+
         if (updatedCategory.rows.length === 0) {
             return res.status(404).json({ error: 'Category not found' });
         }
-        
+
         res.json(updatedCategory.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -522,40 +516,40 @@ router.put('/categories/:id', adminAuth, async (req, res) => {
 router.delete('/categories/:id', adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // Check if category has subcategories
         const hasSubcategories = await pool.query(
             'SELECT EXISTS(SELECT 1 FROM categories WHERE parent_id = $1)',
             [id]
         );
-        
+
         if (hasSubcategories.rows[0].exists) {
-            return res.status(400).json({ 
-                error: 'Cannot delete category with existing subcategories' 
+            return res.status(400).json({
+                error: 'Cannot delete category with existing subcategories'
             });
         }
-        
+
         // Check if category has products
         const hasProducts = await pool.query(
             'SELECT EXISTS(SELECT 1 FROM products WHERE category_id = $1)',
             [id]
         );
-        
+
         if (hasProducts.rows[0].exists) {
-            return res.status(400).json({ 
-                error: 'Cannot delete category with existing products' 
+            return res.status(400).json({
+                error: 'Cannot delete category with existing products'
             });
         }
-        
+
         const deletedCategory = await pool.query(
             'DELETE FROM categories WHERE id = $1 RETURNING *',
             [id]
         );
-        
+
         if (deletedCategory.rows.length === 0) {
             return res.status(404).json({ error: 'Category not found' });
         }
-        
+
         res.json({ message: 'Category deleted successfully' });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -625,10 +619,10 @@ router.post('/coupons', adminAuth, async (req, res) => {
 
         // Add product associations if provided
         if (product_ids && product_ids.length > 0) {
-            const values = product_ids.map((product_id, index) => 
+            const values = product_ids.map((product_id, index) =>
                 `($1, $${index + 2})`
             ).join(', ');
-            
+
             await client.query(`
                 INSERT INTO coupon_products (coupon_id, product_id)
                 VALUES ${values}
@@ -700,12 +694,12 @@ router.put('/coupons/:id', adminAuth, async (req, res) => {
         // Update product associations if provided
         if (product_ids) {
             await client.query('DELETE FROM coupon_products WHERE coupon_id = $1', [id]);
-            
+
             if (product_ids.length > 0) {
-                const values = product_ids.map((_, index) => 
+                const values = product_ids.map((_, index) =>
                     `($1, $${index + 2})`
                 ).join(', ');
-                
+
                 await client.query(`
                     INSERT INTO coupon_products (coupon_id, product_id)
                     VALUES ${values}
