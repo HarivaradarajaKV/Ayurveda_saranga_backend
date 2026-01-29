@@ -24,12 +24,30 @@ router.get('/active', async (req, res) => {
             ORDER BY created_at DESC
             LIMIT 1
         `);
-        
+
         if (gstRate.rows.length === 0) {
             return res.json({ id: null, percentage: 0, name: 'No GST', description: 'No active GST rate' });
         }
-        
+
         res.json(gstRate.rows[0]);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// List all product GST rates with product names (public, used for checkout calculations)
+// MOVED UP to avoid conflict with /:id
+router.get('/products', async (_req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT p.id as product_id, p.name as product_name, 
+                   CAST(COALESCE(g.percentage, (SELECT percentage FROM gst_rates WHERE is_active = true LIMIT 1), 0) AS FLOAT) as percentage,
+                   COALESCE(g.is_active, true) as is_active
+            FROM products p
+            LEFT JOIN product_gst_rates g ON g.product_id = p.id
+            ORDER BY p.name ASC
+        `);
+        res.json(result.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -42,11 +60,11 @@ router.get('/:id', adminAuth, async (req, res) => {
         const gstRate = await pool.query(`
             SELECT * FROM gst_rates WHERE id = $1
         `, [id]);
-        
+
         if (gstRate.rows.length === 0) {
             return res.status(404).json({ error: 'GST rate not found' });
         }
-        
+
         res.json(gstRate.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -57,28 +75,28 @@ router.get('/:id', adminAuth, async (req, res) => {
 router.post('/', adminAuth, async (req, res) => {
     try {
         const { name, description, percentage, is_active } = req.body;
-        
+
         if (!name || percentage === undefined || percentage === null) {
             return res.status(400).json({ error: 'Name and percentage are required' });
         }
-        
+
         if (percentage < 0 || percentage > 100) {
             return res.status(400).json({ error: 'Percentage must be between 0 and 100' });
         }
-        
+
         // If setting this as active, deactivate all other rates
         if (is_active) {
             await pool.query(`
                 UPDATE gst_rates SET is_active = false WHERE is_active = true
             `);
         }
-        
+
         const result = await pool.query(`
             INSERT INTO gst_rates (name, description, percentage, is_active)
             VALUES ($1, $2, $3, $4)
             RETURNING *
         `, [name, description || null, percentage, is_active !== undefined ? is_active : true]);
-        
+
         res.status(201).json(result.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -90,39 +108,39 @@ router.put('/:id', adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const { name, description, percentage, is_active } = req.body;
-        
+
         // Check if GST rate exists
         const existing = await pool.query(`
             SELECT * FROM gst_rates WHERE id = $1
         `, [id]);
-        
+
         if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'GST rate not found' });
         }
-        
+
         // If setting this as active, deactivate all other rates
         if (is_active && !existing.rows[0].is_active) {
             await pool.query(`
                 UPDATE gst_rates SET is_active = false WHERE is_active = true AND id != $1
             `, [id]);
         }
-        
+
         const updateFields = [];
         const updateValues = [];
         let paramCount = 1;
-        
+
         if (name !== undefined) {
             updateFields.push(`name = $${paramCount}`);
             updateValues.push(name);
             paramCount++;
         }
-        
+
         if (description !== undefined) {
             updateFields.push(`description = $${paramCount}`);
             updateValues.push(description);
             paramCount++;
         }
-        
+
         if (percentage !== undefined) {
             if (percentage < 0 || percentage > 100) {
                 return res.status(400).json({ error: 'Percentage must be between 0 and 100' });
@@ -131,27 +149,27 @@ router.put('/:id', adminAuth, async (req, res) => {
             updateValues.push(percentage);
             paramCount++;
         }
-        
+
         if (is_active !== undefined) {
             updateFields.push(`is_active = $${paramCount}`);
             updateValues.push(is_active);
             paramCount++;
         }
-        
+
         if (updateFields.length === 0) {
             return res.status(400).json({ error: 'No fields to update' });
         }
-        
+
         updateValues.push(id);
         updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
-        
+
         const result = await pool.query(`
             UPDATE gst_rates
             SET ${updateFields.join(', ')}
             WHERE id = $${paramCount}
             RETURNING *
         `, updateValues);
-        
+
         res.json(result.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -162,31 +180,31 @@ router.put('/:id', adminAuth, async (req, res) => {
 router.delete('/:id', adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // Check if GST rate exists
         const existing = await pool.query(`
             SELECT * FROM gst_rates WHERE id = $1
         `, [id]);
-        
+
         if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'GST rate not found' });
         }
-        
+
         // Don't allow deletion if it's the only active rate
         if (existing.rows[0].is_active) {
             const activeCount = await pool.query(`
                 SELECT COUNT(*) as count FROM gst_rates WHERE is_active = true
             `);
-            
+
             if (activeCount.rows[0].count <= 1) {
                 return res.status(400).json({ error: 'Cannot delete the only active GST rate. Please activate another rate first.' });
             }
         }
-        
+
         await pool.query(`
             DELETE FROM gst_rates WHERE id = $1
         `, [id]);
-        
+
         res.json({ message: 'GST rate deleted successfully' });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -218,21 +236,8 @@ router.get('/product/:productId', async (req, res) => {
 });
 
 // List all product GST rates with product names (public, used for checkout calculations)
-router.get('/products', async (_req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT p.id as product_id, p.name as product_name, 
-                   COALESCE(g.percentage, 0) as percentage,
-                   COALESCE(g.is_active, false) as is_active
-            FROM products p
-            LEFT JOIN product_gst_rates g ON g.product_id = p.id
-            ORDER BY p.name ASC
-        `);
-        res.json(result.rows);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
+// Moved to top
+// router.get('/products', ...)
 
 // Set or update GST rate for a product (admin)
 router.put('/product/:productId', adminAuth, async (req, res) => {
