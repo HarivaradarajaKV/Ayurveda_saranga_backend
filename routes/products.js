@@ -529,7 +529,7 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
         }
 
 
-        // Rest of the update logic remains the same
+        // Rest of the update logic
         let offerNum = 0;
         if (offer_percentage !== undefined) {
             offerNum = parseInt(offer_percentage);
@@ -538,6 +538,15 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
                     error: 'Invalid offer percentage. Must be between 0 and 100',
                     received: offer_percentage
                 });
+            }
+        }
+
+        // Fetch category name if category_id is provided
+        let categoryName = null;
+        if (category_id) {
+            const catResult = await pool.query('SELECT name FROM categories WHERE id = $1', [category_id]);
+            if (catResult.rows.length > 0) {
+                categoryName = catResult.rows[0].name;
             }
         }
 
@@ -558,8 +567,9 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
                 image_url2 = $12,
                 image_url3 = $13,
                 offer_percentage = $14,
+                category = COALESCE($15, category),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $15 
+            WHERE id = $16 
             RETURNING *
         `, [
             name,
@@ -576,7 +586,8 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             image_url2,
             image_url3,
             offerNum,
-            id
+            categoryName, // $15 - Update the category name as well
+            id // $16
         ]);
 
         if (updatedProduct.rows.length === 0) {
@@ -589,7 +600,8 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             name: result.name,
             image_url: result.image_url,
             image_url2: result.image_url2,
-            image_url3: result.image_url3
+            image_url3: result.image_url3,
+            category: result.category
         });
 
         res.json(result);
