@@ -61,7 +61,7 @@ router.get('/', async (req, res) => {
         } = req.query;
 
         let query = `
-            SELECT DISTINCT
+            SELECT
                 p.id,
                 p.name,
                 p.description,
@@ -76,12 +76,19 @@ router.get('/', async (req, res) => {
                 p.ingredients,
                 p.product_details,
                 p.stock_quantity,
+                p.stock_quantity,
                 p.created_at,
                 p.offer_percentage,
                 c.name as category_name,
                 pc.name as parent_category_name,
                 COALESCE(AVG(r.rating), 0) as average_rating,
-                COUNT(DISTINCT r.id) as review_count
+                COUNT(DISTINCT r.id) as review_count,
+                (
+                    SELECT COALESCE(json_agg(json_build_object('id', c_sub.id, 'name', c_sub.name)), '[]')
+                    FROM product_categories pc_sub
+                    JOIN categories c_sub ON pc_sub.category_id = c_sub.id
+                    WHERE pc_sub.product_id = p.id
+                ) as categories
             FROM products p
             LEFT JOIN categories c ON p.category_id = c.id
             LEFT JOIN categories pc ON c.parent_id = pc.id
@@ -92,8 +99,19 @@ router.get('/', async (req, res) => {
         let paramCount = 1;
 
         // Add filters with proper type casting and error handling
+        // Add filters with proper type casting and error handling
         if (category) {
-            query += ` AND (LOWER(c.name) = LOWER($${paramCount}) OR LOWER(pc.name) = LOWER($${paramCount}))`;
+            // Filter by category name in product_categories or primary category
+            query += ` AND (
+                LOWER(c.name) = LOWER($${paramCount}) 
+                OR LOWER(pc.name) = LOWER($${paramCount})
+                OR EXISTS (
+                    SELECT 1 FROM product_categories pc_join 
+                    JOIN categories c_join ON pc_join.category_id = c_join.id 
+                    WHERE pc_join.product_id = p.id 
+                    AND LOWER(c_join.name) = LOWER($${paramCount})
+                )
+            )`;
             queryParams.push(category);
             paramCount++;
         }
@@ -166,7 +184,7 @@ router.get('/', async (req, res) => {
                 image_url2, image_url3, usage_instructions, size,
                 benefits, ingredients, product_details, stock_quantity,
                 created_at, category_name, parent_category_name,
-                average_rating, review_count, offer_percentage
+                average_rating, review_count, offer_percentage, categories
             } = product;
 
             return {
@@ -189,7 +207,8 @@ router.get('/', async (req, res) => {
                 parent_category_name,
                 average_rating,
                 review_count,
-                offer_percentage: offer_percentage || 0
+                offer_percentage: offer_percentage || 0,
+                categories: categories || []
             };
         });
 
@@ -257,8 +276,17 @@ router.get('/:id', async (req, res) => {
             LIMIT 5
         `, [product.rows[0].category_id, id]);
 
+        // Get all categories for this product
+        const categoriesResult = await pool.query(`
+            SELECT c.id, c.name 
+            FROM product_categories pc
+            JOIN categories c ON pc.category_id = c.id
+            WHERE pc.product_id = $1
+        `, [id]);
+
         const result = {
             ...product.rows[0],
+            categories: categoriesResult.rows,
             reviews: reviews.rows,
             related_products: relatedProducts.rows
         };
@@ -280,6 +308,7 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
             description,
             price,
             category_id,
+            category_ids, // New field for multiple categories
             stock_quantity,
             usage_instructions,
             size,
@@ -290,21 +319,41 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
         } = req.body;
 
         // Basic validation
-        if (!name || !price || !category_id) {
+        if (!name || !price || (!category_id && !category_ids)) {
             return res.status(400).json({
                 error: 'Name, price, and category are required',
-                received: { name, price, category_id }
+                received: { name, price, category_id, category_ids }
             });
         }
 
         // Convert and validate category_id
-        let categoryIdInt;
-        try {
-            categoryIdInt = parseInt(category_id, 10);
-            if (isNaN(categoryIdInt)) {
-                throw new Error('Invalid category ID format');
+        // Parse category_ids
+        let categoryIdsArray = [];
+        if (category_ids) {
+            try {
+                const parsed = JSON.parse(category_ids);
+                categoryIdsArray = Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                // If it's not JSON, maybe it's a single ID or array from form
+                categoryIdsArray = Array.isArray(category_ids) ? category_ids : [category_ids];
             }
-        } catch (error) {
+        }
+
+        // Convert and validate category_id (Primary Category)
+        let categoryIdInt;
+
+        // If category_id is not explicitly provided but we have category_ids, use the first one
+        if (!category_id && categoryIdsArray.length > 0) {
+            categoryIdInt = parseInt(categoryIdsArray[0], 10);
+        } else {
+            try {
+                categoryIdInt = parseInt(category_id, 10);
+            } catch (error) {
+                // Should not happen if validation passed
+            }
+        }
+
+        if (isNaN(categoryIdInt)) {
             return res.status(400).json({
                 error: 'Invalid category ID format',
                 received: category_id
@@ -408,7 +457,50 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
         );
 
 
-        res.status(201).json(newProduct.rows[0]);
+        const newProductResult = newProduct.rows[0];
+
+        // Insert into product_categories
+        if (categoryIdsArray.length > 0) {
+            const categoryValues = categoryIdsArray
+                .filter(id => !isNaN(parseInt(id)))
+                .map(id => `(${newProductResult.id}, ${parseInt(id)})`)
+                .join(',');
+
+            if (categoryValues) {
+                await pool.query(`
+                    INSERT INTO product_categories (product_id, category_id)
+                    VALUES ${categoryValues}
+                    ON CONFLICT DO NOTHING
+                `);
+            }
+        } else {
+            // Insert primary category at minimum
+            await pool.query(`
+                INSERT INTO product_categories (product_id, category_id)
+                VALUES ($1, $2)
+                ON CONFLICT DO NOTHING
+            `, [newProductResult.id, categoryIdInt]);
+        }
+
+        // Fetch the complete product with categories to return
+        const fullProduct = await pool.query(`
+            SELECT 
+                p.*,
+                c.name as category_name,
+                COALESCE(
+                    json_agg(DISTINCT jsonb_build_object('id', cat.id, 'name', cat.name)) 
+                    FILTER (WHERE cat.id IS NOT NULL), 
+                    '[]'
+                ) as categories
+            FROM products p
+            LEFT JOIN categories c ON p.category_id = c.id
+            LEFT JOIN product_categories pc_link ON p.id = pc_link.product_id
+            LEFT JOIN categories cat ON pc_link.category_id = cat.id
+            WHERE p.id = $1
+            GROUP BY p.id, c.name
+        `, [newProductResult.id]);
+
+        res.status(201).json(fullProduct.rows[0]);
     } catch (error) {
         console.error('Error adding product:', error);
         res.status(500).json({ error: error.message });
@@ -428,6 +520,7 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             description,
             price,
             category_id,
+            category_ids, // New field
             stock_quantity,
             usage_instructions,
             size,
@@ -445,6 +538,38 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             replace_image2,
             replace_image3
         } = req.body;
+
+        // Sanitize category_id - it might come as an array or stringified array
+        let categoryIdInt = null;
+        if (category_id) {
+            let rawVal = category_id;
+            // If strictly an array, take first element
+            if (Array.isArray(rawVal)) {
+                rawVal = rawVal[0];
+            }
+            // If it's a string, it might be "37", "[37]", "{"37","37"}", etc.
+            if (typeof rawVal === 'string') {
+                rawVal = rawVal.trim();
+                // Handle JSON string "[37]"
+                if (rawVal.startsWith('[') && rawVal.endsWith(']')) {
+                    try {
+                        const parsed = JSON.parse(rawVal);
+                        if (Array.isArray(parsed) && parsed.length > 0) rawVal = parsed[0];
+                    } catch (e) { }
+                }
+                // Handle Postgres array string "{37,37}"
+                else if (rawVal.startsWith('{') && rawVal.endsWith('}')) {
+                    const parts = rawVal.slice(1, -1).split(',');
+                    if (parts.length > 0) rawVal = parts[0].replace(/^"|"$/g, '');
+                }
+            }
+
+            // Parse to int
+            const parsedInt = parseInt(rawVal, 10);
+            if (!isNaN(parsedInt)) {
+                categoryIdInt = parsedInt;
+            }
+        }
 
         // Get current images
         const currentImages = await pool.query(
@@ -543,8 +668,8 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
 
         // Fetch category name if category_id is provided
         let categoryName = null;
-        if (category_id) {
-            const catResult = await pool.query('SELECT name FROM categories WHERE id = $1', [category_id]);
+        if (categoryIdInt) {
+            const catResult = await pool.query('SELECT name FROM categories WHERE id = $1', [categoryIdInt]);
             if (catResult.rows.length > 0) {
                 categoryName = catResult.rows[0].name;
             }
@@ -575,7 +700,7 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             name,
             description,
             price,
-            category_id,
+            categoryIdInt, // Use sanitized ID
             stock_quantity,
             usage_instructions,
             size,
@@ -594,17 +719,62 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             return res.status(404).json({ error: 'Product not found' });
         }
 
-        const result = updatedProduct.rows[0];
-        console.log('Final updated product with images:', {
-            id: result.id,
-            name: result.name,
-            image_url: result.image_url,
-            image_url2: result.image_url2,
-            image_url3: result.image_url3,
-            category: result.category
+        // Update product_categories if category_ids provided
+        if (category_ids) {
+            let categoryIdsArray = [];
+            try {
+                const parsed = JSON.parse(category_ids);
+                categoryIdsArray = Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                categoryIdsArray = Array.isArray(category_ids) ? category_ids : [category_ids];
+            }
+
+            if (categoryIdsArray.length > 0) {
+                // Delete existing
+                await pool.query('DELETE FROM product_categories WHERE product_id = $1', [id]);
+
+                // Insert new
+                const categoryValues = categoryIdsArray
+                    .filter(catId => !isNaN(parseInt(catId)))
+                    .map(catId => `(${id}, ${parseInt(catId)})`)
+                    .join(',');
+
+                if (categoryValues) {
+                    await pool.query(`
+                        INSERT INTO product_categories (product_id, category_id)
+                        VALUES ${categoryValues}
+                        ON CONFLICT DO NOTHING
+                    `);
+                }
+            }
+        }
+
+        // Fetch the complete product with categories to return
+        const fullProduct = await pool.query(`
+            SELECT 
+                p.*,
+                c.name as category_name,
+                COALESCE(
+                    json_agg(DISTINCT jsonb_build_object('id', cat.id, 'name', cat.name)) 
+                    FILTER (WHERE cat.id IS NOT NULL), 
+                    '[]'
+                ) as categories
+            FROM products p
+            LEFT JOIN categories c ON p.category_id = c.id
+            LEFT JOIN product_categories pc_link ON p.id = pc_link.product_id
+            LEFT JOIN categories cat ON pc_link.category_id = cat.id
+            WHERE p.id = $1
+            GROUP BY p.id, c.name
+        `, [id]);
+
+        const finalResult = fullProduct.rows[0];
+        console.log('Final updated product with categories:', {
+            id: finalResult.id,
+            name: finalResult.name,
+            categories: finalResult.categories
         });
 
-        res.json(result);
+        res.json(finalResult);
     } catch (error) {
         console.error('Error updating product:', error);
         res.status(500).json({ error: 'Failed to update product' });

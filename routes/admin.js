@@ -1,6 +1,8 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { adminAuth } = require('../middleware/auth');
+const upload = require('../middleware/upload');
+const { uploadCategoryImage, deleteImage } = require('../services/supabaseStorage');
 const PDFDocument = require('pdfkit');
 const combosRouter = require('./combos');
 
@@ -57,11 +59,18 @@ router.get('/products', adminAuth, async (req, res) => {
             SELECT 
                 p.*,
                 c.name as category_name,
+                COALESCE(
+                    json_agg(DISTINCT jsonb_build_object('id', cat.id, 'name', cat.name)) 
+                    FILTER (WHERE cat.id IS NOT NULL), 
+                    '[]'
+                ) as categories,
                 COALESCE(AVG(r.rating), 0) as average_rating,
                 COUNT(DISTINCT r.id) as review_count,
                 COUNT(DISTINCT o.id) as order_count
             FROM products p
             LEFT JOIN categories c ON p.category_id = c.id
+            LEFT JOIN product_categories pc_link ON p.id = pc_link.product_id
+            LEFT JOIN categories cat ON pc_link.category_id = cat.id
             LEFT JOIN reviews r ON p.id = r.product_id
             LEFT JOIN order_items oi ON p.id = oi.product_id
             LEFT JOIN orders o ON oi.order_id = o.id
@@ -433,10 +442,10 @@ router.get('/categories', adminAuth, async (req, res) => {
             SELECT 
                 c.*,
                 p.name as parent_name,
-                COUNT(DISTINCT pr.id) as product_count
+                COUNT(DISTINCT pc.product_id) as product_count
             FROM categories c
             LEFT JOIN categories p ON c.parent_id = p.id
-            LEFT JOIN products pr ON c.id = pr.category_id
+            LEFT JOIN product_categories pc ON c.id = pc.category_id
             GROUP BY c.id, p.name
             ORDER BY c.name
         `);
@@ -448,9 +457,22 @@ router.get('/categories', adminAuth, async (req, res) => {
 });
 
 // Add new category
-router.post('/categories', adminAuth, async (req, res) => {
+// Add new category
+router.post('/categories', adminAuth, upload.single('image'), async (req, res) => {
     try {
-        const { name, description, parent_id, image_url } = req.body;
+        const { name, description, parent_id } = req.body;
+        let image_url = req.body.image_url; // Use provided URL or null
+
+        // Handle file upload if present
+        if (req.file) {
+            try {
+                const uploadResult = await uploadCategoryImage(req.file.path, name || 'new_category');
+                image_url = uploadResult.url;
+            } catch (uploadError) {
+                console.error('Error uploading category image:', uploadError);
+                return res.status(500).json({ error: 'Failed to upload image' });
+            }
+        }
 
         // Check if category name already exists
         const existingCategory = await pool.query(
@@ -469,15 +491,18 @@ router.post('/categories', adminAuth, async (req, res) => {
 
         res.status(201).json(newCategory.rows[0]);
     } catch (error) {
+        console.error('Error adding category:', error);
         res.status(500).json({ error: error.message });
     }
 });
 
 // Update category
-router.put('/categories/:id', adminAuth, async (req, res) => {
+// Update category
+router.put('/categories/:id', adminAuth, upload.single('image'), async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, description, parent_id, image_url } = req.body;
+        const { name, description, parent_id } = req.body;
+        let image_url = req.body.image_url;
 
         // Check if new name conflicts with existing categories
         if (name) {
@@ -488,6 +513,23 @@ router.put('/categories/:id', adminAuth, async (req, res) => {
 
             if (existingCategory.rows.length > 0) {
                 return res.status(400).json({ error: 'Category name already exists' });
+            }
+        }
+
+        // Handle file upload if present
+        if (req.file) {
+            try {
+                // Should we delete the old image?Ideally yes, but let's first get the old URL
+                const currentCat = await pool.query('SELECT image_url FROM categories WHERE id = $1', [id]);
+                if (currentCat.rows.length > 0 && currentCat.rows[0].image_url) {
+                    await deleteImage(currentCat.rows[0].image_url);
+                }
+
+                const uploadResult = await uploadCategoryImage(req.file.path, name || id);
+                image_url = uploadResult.url;
+            } catch (uploadError) {
+                console.error('Error uploading category image:', uploadError);
+                return res.status(500).json({ error: 'Failed to upload image' });
             }
         }
 
@@ -508,6 +550,7 @@ router.put('/categories/:id', adminAuth, async (req, res) => {
 
         res.json(updatedCategory.rows[0]);
     } catch (error) {
+        console.error('Error updating category:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -517,28 +560,29 @@ router.delete('/categories/:id', adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Check if category has subcategories
-        const hasSubcategories = await pool.query(
-            'SELECT EXISTS(SELECT 1 FROM categories WHERE parent_id = $1)',
+        // Unlink subcategories (set parent_id to NULL)
+        await pool.query(
+            'UPDATE categories SET parent_id = NULL WHERE parent_id = $1',
             [id]
         );
 
-        if (hasSubcategories.rows[0].exists) {
-            return res.status(400).json({
-                error: 'Cannot delete category with existing subcategories'
-            });
-        }
-
-        // Check if category has products
-        const hasProducts = await pool.query(
-            'SELECT EXISTS(SELECT 1 FROM products WHERE category_id = $1)',
+        // Unlink products from old relationship
+        await pool.query(
+            'UPDATE products SET category_id = NULL WHERE category_id = $1',
             [id]
         );
 
-        if (hasProducts.rows[0].exists) {
-            return res.status(400).json({
-                error: 'Cannot delete category with existing products'
-            });
+        // Remove from new many-to-many relationship
+        await pool.query(
+            'DELETE FROM product_categories WHERE category_id = $1',
+            [id]
+        );
+
+        // Check if there is an image to delete
+        const currentCat = await pool.query('SELECT image_url FROM categories WHERE id = $1', [id]);
+        if (currentCat.rows.length > 0 && currentCat.rows[0].image_url) {
+            const { deleteImage } = require('../services/supabaseStorage');
+            await deleteImage(currentCat.rows[0].image_url);
         }
 
         const deletedCategory = await pool.query(
@@ -553,6 +597,62 @@ router.delete('/categories/:id', adminAuth, async (req, res) => {
         res.json({ message: 'Category deleted successfully' });
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Get products in a category
+router.get('/categories/:id/products', adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const products = await pool.query(`
+            SELECT p.id, p.name, p.price, p.image_url,
+                   CASE WHEN pc.product_id IS NOT NULL THEN true ELSE false END as is_in_category
+            FROM products p
+            INNER JOIN product_categories pc ON p.id = pc.product_id
+            WHERE pc.category_id = $1
+            ORDER BY p.name
+        `, [id]);
+        res.json(products.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update products in a category (Bulk assign)
+router.post('/categories/:id/products', adminAuth, async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const { id } = req.params;
+        const { product_ids } = req.body; // Array of product IDs
+
+        if (!Array.isArray(product_ids)) {
+            return res.status(400).json({ error: 'product_ids must be an array' });
+        }
+
+        await client.query('BEGIN');
+
+        // 1. Remove all existing links for this category in the join table
+        // Note: We are NOT changing the primary 'category_id' column on the products table to avoid data loss/complexity
+        await client.query('DELETE FROM product_categories WHERE category_id = $1', [id]);
+
+        // 2. Insert new links
+        if (product_ids.length > 0) {
+            const values = product_ids.map(pid => `(${parseInt(pid)}, ${parseInt(id)})`).join(',');
+            await client.query(`
+                INSERT INTO product_categories (product_id, category_id)
+                VALUES ${values}
+                ON CONFLICT DO NOTHING
+            `);
+        }
+
+        await client.query('COMMIT');
+        res.json({ message: 'Category products updated successfully', count: product_ids.length });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error updating category products:', error);
+        res.status(500).json({ error: error.message });
+    } finally {
+        client.release();
     }
 });
 

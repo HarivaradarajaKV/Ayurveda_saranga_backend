@@ -26,20 +26,26 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // Get category details
         const category = await pool.query(
             'SELECT c.*, p.name as parent_name FROM categories c LEFT JOIN categories p ON c.parent_id = p.id WHERE c.id = $1',
             [id]
         );
-        
+
         if (category.rows.length === 0) {
             return res.status(404).json({ error: 'Category not found' });
         }
 
         // Get products in this category
         const products = await pool.query(
-            'SELECT * FROM products WHERE category_id = $1',
+            `SELECT DISTINCT * FROM (
+                SELECT * FROM products WHERE category_id = $1
+                UNION
+                SELECT p.* FROM products p
+                JOIN product_categories pc ON p.id = pc.product_id
+                WHERE pc.category_id = $1
+            ) combined_products`,
             [id]
         );
 

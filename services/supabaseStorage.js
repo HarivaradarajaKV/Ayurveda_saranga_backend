@@ -98,6 +98,50 @@ async function deleteImage(imageUrl) {
 }
 
 /**
+ * Upload category image from file path
+ * @param {string} filePath - Local file path
+ * @param {string} categoryInfos - Category name or ID for naming
+ * @returns {Promise<{url: string, path: string}>}
+ */
+async function uploadCategoryImage(filePath, categoryInfos) {
+    const fs = require('fs');
+    const path = require('path');
+
+    try {
+        // Read file
+        const fileBuffer = fs.readFileSync(filePath);
+        // Sanitize category name for filename
+        const safeName = String(categoryInfos).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const fileName = `category-${safeName}-${Date.now()}${path.extname(filePath)}`;
+
+        // Determine content type
+        const ext = path.extname(filePath).toLowerCase();
+        const contentTypeMap = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp'
+        };
+        const contentType = contentTypeMap[ext] || 'image/jpeg';
+
+        const result = await uploadImage(fileBuffer, fileName, contentType);
+
+        // Clean up: Delete local temporary file
+        try {
+            fs.unlinkSync(filePath);
+        } catch (cleanupError) {
+            console.warn('Warning: Failed to delete temporary file:', filePath, cleanupError.message);
+        }
+
+        return result;
+    } catch (error) {
+        console.error('Error uploading category image:', error);
+        throw error;
+    }
+}
+
+/**
  * Upload product image from file path
  * @param {string} filePath - Local file path
  * @param {string} productId - Product ID for naming
@@ -174,6 +218,8 @@ module.exports = {
     uploadImage,
     deleteImage,
     uploadProductImage,
+    uploadCategoryImage,
+    checkStorageConfig,
     checkStorageConfig,
     BUCKET_NAME
 };

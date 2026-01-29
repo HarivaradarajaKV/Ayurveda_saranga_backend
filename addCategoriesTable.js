@@ -1,37 +1,21 @@
 const pool = require('./db');
-require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 
-async function createCategoriesTable() {
+async function createProductCategoriesTable() {
     try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS categories (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(100) NOT NULL UNIQUE,
-                description TEXT,
-                image_url TEXT,
-                parent_id INTEGER REFERENCES categories(id),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
+        const sqlPath = path.join(__dirname, 'migrations', 'add_product_categories_table.sql');
+        const sql = fs.readFileSync(sqlPath, 'utf8');
 
-            -- Add category_id to products table if it doesn't exist
-            DO $$ 
-            BEGIN 
-                IF NOT EXISTS (
-                    SELECT 1 
-                    FROM information_schema.columns 
-                    WHERE table_name='products' AND column_name='category_id'
-                ) THEN 
-                    ALTER TABLE products 
-                    ADD COLUMN category_id INTEGER REFERENCES categories(id);
-                END IF;
-            END $$;
-        `);
-        console.log('Categories table created successfully');
+        console.log('Executing migration script...');
+        await pool.query(sql);
+
+        console.log('Product categories table created and populated successfully');
         process.exit(0);
     } catch (error) {
-        console.error('Error creating categories table:', error);
+        console.error('Error creating product categories table:', error);
         process.exit(1);
     }
 }
 
-createCategoriesTable(); 
+createProductCategoriesTable();
