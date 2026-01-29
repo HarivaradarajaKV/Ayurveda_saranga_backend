@@ -3,11 +3,15 @@ const pool = require('../db');
 const { auth, adminAuth } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
+const { uploadProductImage, deleteImage } = require('../services/supabaseStorage');
+
+const os = require('os');
 
 // Configure multer for handling file uploads
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, 'uploads/');
+        // Use system temp directory for Vercel compatibility (read-only filesystem)
+        cb(null, os.tmpdir());
     },
     filename: function (req, file, cb) {
         const extension = path.extname(file.originalname);
@@ -44,10 +48,10 @@ const uploadFields = upload.fields([
 // Get all products with filters
 router.get('/', async (req, res) => {
     try {
-        const { 
+        const {
             category,
-            search, 
-            min_price, 
+            search,
+            min_price,
             max_price,
             product_types,
             skin_types,
@@ -152,9 +156,9 @@ router.get('/', async (req, res) => {
 
         // Execute query with error handling
         console.log('Executing query:', { text: query, values: queryParams });
-        
+
         const products = await pool.query(query, queryParams);
-        
+
         // Process the results to ensure all required fields are present
         const processedProducts = products.rows.map(product => {
             const {
@@ -196,10 +200,10 @@ router.get('/', async (req, res) => {
         });
     } catch (error) {
         console.error('Error in products route:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             success: false,
             error: 'Failed to fetch products',
-            details: error.message 
+            details: error.message
         });
     }
 });
@@ -208,7 +212,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         // Get product details with category information
         const product = await pool.query(`
             SELECT 
@@ -224,11 +228,11 @@ router.get('/:id', async (req, res) => {
             WHERE p.id = $1
             GROUP BY p.id, c.name, pc.name
         `, [id]);
-        
+
         if (product.rows.length === 0) {
             return res.status(404).json({ error: 'Product not found' });
         }
-        
+
         // Get product reviews
         const reviews = await pool.query(`
             SELECT 
@@ -239,7 +243,7 @@ router.get('/:id', async (req, res) => {
             WHERE r.product_id = $1
             ORDER BY r.created_at DESC
         `, [id]);
-        
+
         // Get related products from same category
         const relatedProducts = await pool.query(`
             SELECT 
@@ -252,13 +256,13 @@ router.get('/:id', async (req, res) => {
             GROUP BY p.id
             LIMIT 5
         `, [product.rows[0].category_id, id]);
-        
+
         const result = {
             ...product.rows[0],
             reviews: reviews.rows,
             related_products: relatedProducts.rows
         };
-        
+
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -271,11 +275,11 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
         console.log('Received form fields:', req.body);
         console.log('Received files:', req.files);
 
-        const { 
-            name, 
-            description, 
-            price, 
-            category_id, 
+        const {
+            name,
+            description,
+            price,
+            category_id,
             stock_quantity,
             usage_instructions,
             size,
@@ -287,7 +291,7 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
 
         // Basic validation
         if (!name || !price || !category_id) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 error: 'Name, price, and category are required',
                 received: { name, price, category_id }
             });
@@ -301,7 +305,7 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
                 throw new Error('Invalid category ID format');
             }
         } catch (error) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 error: 'Invalid category ID format',
                 received: category_id
             });
@@ -312,7 +316,7 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
             'SELECT id, name FROM categories WHERE id = $1',
             [categoryIdInt]
         );
-        
+
         if (categoryResult.rows.length === 0) {
             return res.status(400).json({ error: 'Invalid category ID' });
         }
@@ -325,31 +329,57 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
         const offerNum = parseInt(offer_percentage || '0', 10);
 
         if (isNaN(priceNum)) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 error: 'Invalid price format',
                 received: price
             });
         }
 
         if (isNaN(stockNum)) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 error: 'Invalid stock quantity format',
                 received: stock_quantity
             });
         }
 
         if (isNaN(offerNum) || offerNum < 0 || offerNum > 100) {
-            return res.status(400).json({ 
+            return res.status(400).json({
                 error: 'Invalid offer percentage. Must be between 0 and 100',
                 received: offer_percentage
             });
         }
 
-        // Handle image URLs from uploaded files
+
+        // Handle image URLs from uploaded files - Upload to Supabase Storage
         const files = req.files || [];
-        const image_url = files[0] ? `/uploads/${files[0].filename}` : null;
-        const image_url2 = files[1] ? `/uploads/${files[1].filename}` : null;
-        const image_url3 = files[2] ? `/uploads/${files[2].filename}` : null;
+        let image_url = null;
+        let image_url2 = null;
+        let image_url3 = null;
+
+        try {
+            // Upload images to Supabase Storage if files are provided
+            if (files[0]) {
+                const result = await uploadProductImage(files[0].path, 'temp', 1);
+                image_url = result.url;
+                console.log('Image 1 uploaded to Supabase:', image_url);
+            }
+            if (files[1]) {
+                const result = await uploadProductImage(files[1].path, 'temp', 2);
+                image_url2 = result.url;
+                console.log('Image 2 uploaded to Supabase:', image_url2);
+            }
+            if (files[2]) {
+                const result = await uploadProductImage(files[2].path, 'temp', 3);
+                image_url3 = result.url;
+                console.log('Image 3 uploaded to Supabase:', image_url3);
+            }
+        } catch (uploadError) {
+            console.error('Error uploading images to Supabase:', uploadError);
+            return res.status(500).json({
+                error: 'Failed to upload images to storage',
+                details: uploadError.message
+            });
+        }
 
         const newProduct = await pool.query(
             `INSERT INTO products (
@@ -359,11 +389,11 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) 
             RETURNING *`,
             [
-                name, 
-                description || '', 
-                priceNum, 
+                name,
+                description || '',
+                priceNum,
                 categoryIdInt,
-                categoryName, 
+                categoryName,
                 stockNum,
                 usage_instructions || null,
                 size || null,
@@ -376,7 +406,8 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
                 offerNum
             ]
         );
-        
+
+
         res.status(201).json(newProduct.rows[0]);
     } catch (error) {
         console.error('Error adding product:', error);
@@ -391,11 +422,11 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
         console.log('Updating product:', id);
         console.log('Request body:', req.body);
         console.log('Request files:', req.files);
-        
-        const { 
-            name, 
-            description, 
-            price, 
+
+        const {
+            name,
+            description,
+            price,
             category_id,
             stock_quantity,
             usage_instructions,
@@ -414,7 +445,7 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             replace_image2,
             replace_image3
         } = req.body;
-        
+
         // Get current images
         const currentImages = await pool.query(
             'SELECT image_url, image_url2, image_url3 FROM products WHERE id = $1',
@@ -427,67 +458,89 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
 
         const current = currentImages.rows[0];
 
-        // Handle image updates - prioritize new uploads over existing images
-        let image_url = null;
-        let image_url2 = null;
-        let image_url3 = null;
+        // Handle image updates - Upload new images to Supabase Storage
+        let image_url = current.image_url;
+        let image_url2 = current.image_url2;
+        let image_url3 = current.image_url3;
 
-        // Process new uploaded files first (these take priority)
-        if (req.files) {
-            if (req.files.image1 && req.files.image1[0]) {
-                image_url = `/uploads/${req.files.image1[0].filename}`;
-                console.log('Setting new image1:', image_url);
+        try {
+            // Process new uploaded files first (these take priority)
+            if (req.files) {
+                if (req.files.image1 && req.files.image1[0]) {
+                    // Delete old image if it exists
+                    if (current.image_url) {
+                        await deleteImage(current.image_url);
+                    }
+                    // Upload new image to Supabase
+                    const result = await uploadProductImage(req.files.image1[0].path, id, 1);
+                    image_url = result.url;
+                    console.log('Replaced image1 with Supabase URL:', image_url);
+                }
+                if (req.files.image2 && req.files.image2[0]) {
+                    // Delete old image if it exists
+                    if (current.image_url2) {
+                        await deleteImage(current.image_url2);
+                    }
+                    // Upload new image to Supabase
+                    const result = await uploadProductImage(req.files.image2[0].path, id, 2);
+                    image_url2 = result.url;
+                    console.log('Replaced image2 with Supabase URL:', image_url2);
+                }
+                if (req.files.image3 && req.files.image3[0]) {
+                    // Delete old image if it exists
+                    if (current.image_url3) {
+                        await deleteImage(current.image_url3);
+                    }
+                    // Upload new image to Supabase
+                    const result = await uploadProductImage(req.files.image3[0].path, id, 3);
+                    image_url3 = result.url;
+                    console.log('Replaced image3 with Supabase URL:', image_url3);
+                }
             }
-            if (req.files.image2 && req.files.image2[0]) {
-                image_url2 = `/uploads/${req.files.image2[0].filename}`;
-                console.log('Setting new image2:', image_url2);
-            }
-            if (req.files.image3 && req.files.image3[0]) {
-                image_url3 = `/uploads/${req.files.image3[0].filename}`;
-                console.log('Setting new image3:', image_url3);
-            }
+        } catch (uploadError) {
+            console.error('Error uploading images to Supabase:', uploadError);
+            return res.status(500).json({
+                error: 'Failed to upload images to storage',
+                details: uploadError.message
+            });
         }
 
         // Handle image removals
         if (remove_image1 === 'true') {
+            if (current.image_url) {
+                await deleteImage(current.image_url);
+            }
             image_url = null;
             console.log('Removing image1');
         }
         if (remove_image2 === 'true') {
+            if (current.image_url2) {
+                await deleteImage(current.image_url2);
+            }
             image_url2 = null;
             console.log('Removing image2');
         }
         if (remove_image3 === 'true') {
+            if (current.image_url3) {
+                await deleteImage(current.image_url3);
+            }
             image_url3 = null;
             console.log('Removing image3');
         }
 
-        // Only keep existing images if no new file was uploaded and not marked for removal
-        if (!req.files?.image1 && remove_image1 !== 'true' && existing_image1) {
-            image_url = existing_image1;
-            console.log('Keeping existing image1:', image_url);
-        }
-        if (!req.files?.image2 && remove_image2 !== 'true' && existing_image2) {
-            image_url2 = existing_image2;
-            console.log('Keeping existing image2:', image_url2);
-        }
-        if (!req.files?.image3 && remove_image3 !== 'true' && existing_image3) {
-            image_url3 = existing_image3;
-            console.log('Keeping existing image3:', image_url3);
-        }
 
         // Rest of the update logic remains the same
         let offerNum = 0;
         if (offer_percentage !== undefined) {
             offerNum = parseInt(offer_percentage);
             if (isNaN(offerNum) || offerNum < 0 || offerNum > 100) {
-                return res.status(400).json({ 
+                return res.status(400).json({
                     error: 'Invalid offer percentage. Must be between 0 and 100',
                     received: offer_percentage
                 });
             }
         }
-        
+
         const updatedProduct = await pool.query(`
             UPDATE products 
             SET 
@@ -509,10 +562,10 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             WHERE id = $15 
             RETURNING *
         `, [
-            name, 
-            description, 
-            price, 
-            category_id, 
+            name,
+            description,
+            price,
+            category_id,
             stock_quantity,
             usage_instructions,
             size,
@@ -550,16 +603,16 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
 router.delete('/:id', adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         const deletedProduct = await pool.query(
             'DELETE FROM products WHERE id = $1 RETURNING *',
             [id]
         );
-        
+
         if (deletedProduct.rows.length === 0) {
             return res.status(404).json({ error: 'Product not found' });
         }
-        
+
         res.json({ message: 'Product deleted successfully' });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -597,7 +650,7 @@ router.post('/:id/reviews', auth, async (req, res) => {
 
         // Get user name for the response
         const user = await pool.query('SELECT name FROM users WHERE id = $1', [user_id]);
-        
+
         const reviewWithUserName = {
             ...newReview.rows[0],
             user_name: user.rows[0].name
@@ -613,7 +666,7 @@ router.post('/:id/reviews', auth, async (req, res) => {
 router.get('/:id/reviews', async (req, res) => {
     try {
         const { id } = req.params;
-        
+
         const reviews = await pool.query(
             `SELECT r.*, u.name as user_name 
             FROM reviews r 
@@ -622,7 +675,7 @@ router.get('/:id/reviews', async (req, res) => {
             ORDER BY r.created_at DESC`,
             [id]
         );
-        
+
         res.json(reviews.rows);
     } catch (error) {
         res.status(500).json({ error: error.message });

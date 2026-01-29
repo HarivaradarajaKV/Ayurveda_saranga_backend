@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
     "@types/axios": "^0.9.36",
     "axios": "^1.13.2",
     "bcrypt": "^5.1.0",
