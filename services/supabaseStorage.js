@@ -153,9 +153,9 @@ async function uploadProductImage(filePath, productId, imageIndex) {
     const path = require('path');
 
     try {
-        // Auto-square crop to 2400x2400 for standard static images and GIFs
+        // Auto-square crop to 2400x2400 for standard static images (exclude GIFs to preserve animations)
         const ext = path.extname(filePath).toLowerCase();
-        if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) {
+        if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
             try {
                 console.log('Squaring image/GIF to 2400x2400 at:', filePath);
                 const Jimp = require('jimp');
