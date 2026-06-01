@@ -153,20 +153,46 @@ async function uploadProductImage(filePath, productId, imageIndex) {
     const path = require('path');
 
     try {
+        // Auto-square crop to 2400x2400 for standard static images and GIFs
+        const ext = path.extname(filePath).toLowerCase();
+        if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) {
+            try {
+                console.log('Squaring image/GIF to 2400x2400 at:', filePath);
+                const Jimp = require('jimp');
+                const img = await Jimp.read(filePath);
+                const size = Math.min(img.bitmap.width, img.bitmap.height);
+                const x = Math.round((img.bitmap.width - size) / 2);
+                const y = Math.round((img.bitmap.height - size) / 2);
+                await img.crop(x, y, size, size).resize(2400, 2400).writeAsync(filePath);
+                console.log('Successfully center-squared image/GIF to 2400x2400:', filePath);
+            } catch (cropError) {
+                console.warn('Warning: Failed to auto-square crop using Jimp, proceeding with original:', cropError.message);
+            }
+        }
+
         // Read file
         const fileBuffer = fs.readFileSync(filePath);
         const fileName = `product-${productId}-image${imageIndex}${path.extname(filePath)}`;
 
         // Determine content type
-        const ext = path.extname(filePath).toLowerCase();
         const contentTypeMap = {
             '.jpg': 'image/jpeg',
             '.jpeg': 'image/jpeg',
             '.png': 'image/png',
             '.gif': 'image/gif',
-            '.webp': 'image/webp'
+            '.webp': 'image/webp',
+            '.mp4': 'video/mp4',
+            '.mov': 'video/quicktime',
+            '.avi': 'video/x-msvideo',
+            '.webm': 'video/webm',
+            '.pdf': 'application/pdf',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.xls': 'application/vnd.ms-excel',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            '.txt': 'text/plain'
         };
-        const contentType = contentTypeMap[ext] || 'image/jpeg';
+        const contentType = contentTypeMap[ext] || 'application/octet-stream';
 
         const result = await uploadImage(fileBuffer, fileName, contentType);
 

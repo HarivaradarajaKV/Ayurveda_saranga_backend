@@ -828,4 +828,70 @@ router.delete('/coupons/:id', adminAuth, async (req, res) => {
     }
 });
 
+// Get all products with new arrivals status (for management list)
+router.get('/new-arrivals', adminAuth, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                p.id, 
+                p.name, 
+                p.price, 
+                p.image_url, 
+                p.is_new_arrival, 
+                p.category_id,
+                COALESCE(
+                    (
+                        SELECT json_agg(category_id)
+                        FROM product_categories
+                        WHERE product_id = p.id
+                    ),
+                    '[]'::json
+                ) as category_ids
+            FROM products p
+            ORDER BY p.name ASC
+        `);
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update new arrivals (Bulk assign)
+router.post('/new-arrivals', adminAuth, async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const { product_ids } = req.body;
+
+        if (!Array.isArray(product_ids)) {
+            return res.status(400).json({ error: 'product_ids must be an array' });
+        }
+
+        await client.query('BEGIN');
+
+        // 1. Reset all products is_new_arrival flag
+        await client.query('UPDATE products SET is_new_arrival = false');
+
+        // 2. Set new arrivals for selected IDs
+        if (product_ids.length > 0) {
+            const safeIds = product_ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+            if (safeIds.length > 0) {
+                await client.query(`
+                    UPDATE products 
+                    SET is_new_arrival = true 
+                    WHERE id = ANY($1::integer[])
+                `, [safeIds]);
+            }
+        }
+
+        await client.query('COMMIT');
+        res.json({ message: 'New arrivals updated successfully', count: product_ids.length });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error in post new-arrivals:', error);
+        res.status(500).json({ error: error.message });
+    } finally {
+        client.release();
+    }
+});
+
 module.exports = router; 

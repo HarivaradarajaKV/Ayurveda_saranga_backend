@@ -20,9 +20,9 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-    // Accept images only
-    if (!file.originalname.match(/\.(jpg|jpeg|png|gif)$/)) {
-        return cb(new Error('Only image files are allowed!'), false);
+    // Accept images, gifs, videos, and documents
+    if (!file.originalname.match(/\.(jpg|jpeg|png|gif|mp4|mov|avi|webm|pdf|doc|docx|txt|xls|xlsx)$/i)) {
+        return cb(new Error('Only image, gif, video, and document files are allowed!'), false);
     }
     cb(null, true);
 };
@@ -31,14 +31,14 @@ const uploadConfig = {
     storage: storage,
     fileFilter: fileFilter,
     limits: {
-        fileSize: 10 * 1024 * 1024 // 10MB limit for higher quality images
+        fileSize: 50 * 1024 * 1024 // 50MB limit to support 2400x2400 high-res images, gifs, and videos
     }
 };
 
 const upload = multer(uploadConfig);
 
 // Create separate upload middlewares for different routes
-const uploadArray = upload.array('images', 3);
+const uploadArray = upload.array('images', 20); // Allow up to 20 files
 const uploadFields = upload.fields([
     { name: 'image1', maxCount: 1 },
     { name: 'image2', maxCount: 1 },
@@ -56,6 +56,7 @@ router.get('/', async (req, res) => {
             product_types,
             skin_types,
             concerns,
+            new_arrivals,
             page = 1,
             limit = 10
         } = req.query;
@@ -70,15 +71,16 @@ router.get('/', async (req, res) => {
                 p.image_url,
                 p.image_url2,
                 p.image_url3,
+                p.image_url4,
                 p.usage_instructions,
                 p.size,
                 p.benefits,
                 p.ingredients,
                 p.product_details,
                 p.stock_quantity,
-                p.stock_quantity,
                 p.created_at,
                 p.offer_percentage,
+                p.is_new_arrival,
                 c.name as category_name,
                 pc.name as parent_category_name,
                 COALESCE(AVG(r.rating), 0) as average_rating,
@@ -98,7 +100,6 @@ router.get('/', async (req, res) => {
         const queryParams = [];
         let paramCount = 1;
 
-        // Add filters with proper type casting and error handling
         // Add filters with proper type casting and error handling
         if (category) {
             // Filter by category name in product_categories or primary category
@@ -161,6 +162,10 @@ router.get('/', async (req, res) => {
             paramCount += concernList.length;
         }
 
+        if (new_arrivals === 'true') {
+            query += ` AND p.is_new_arrival = true`;
+        }
+
         // Add group by clause
         query += ` GROUP BY p.id, c.name, pc.name`;
 
@@ -181,10 +186,10 @@ router.get('/', async (req, res) => {
         const processedProducts = products.rows.map(product => {
             const {
                 id, name, description, price, category, image_url,
-                image_url2, image_url3, usage_instructions, size,
+                image_url2, image_url3, image_url4, usage_instructions, size,
                 benefits, ingredients, product_details, stock_quantity,
                 created_at, category_name, parent_category_name,
-                average_rating, review_count, offer_percentage, categories
+                average_rating, review_count, offer_percentage, is_new_arrival, categories
             } = product;
 
             return {
@@ -196,6 +201,7 @@ router.get('/', async (req, res) => {
                 image_url,
                 image_url2,
                 image_url3,
+                image_url4,
                 usage_instructions,
                 size,
                 benefits,
@@ -208,6 +214,7 @@ router.get('/', async (req, res) => {
                 average_rating,
                 review_count,
                 offer_percentage: offer_percentage || 0,
+                is_new_arrival: is_new_arrival || false,
                 categories: categories || []
             };
         });
@@ -399,43 +406,50 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
         }
 
 
-        // Handle image URLs from uploaded files - Upload to Supabase Storage
+        // Handle media uploads from files (images, gifs, videos)
         const files = req.files || [];
-        let image_url = null;
-        let image_url2 = null;
-        let image_url3 = null;
+        const mediaList = [];
 
         try {
-            // Upload images to Supabase Storage if files are provided
-            if (files[0]) {
-                const result = await uploadProductImage(files[0].path, 'temp', 1);
-                image_url = result.url;
-                console.log('Image 1 uploaded to Supabase:', image_url);
-            }
-            if (files[1]) {
-                const result = await uploadProductImage(files[1].path, 'temp', 2);
-                image_url2 = result.url;
-                console.log('Image 2 uploaded to Supabase:', image_url2);
-            }
-            if (files[2]) {
-                const result = await uploadProductImage(files[2].path, 'temp', 3);
-                image_url3 = result.url;
-                console.log('Image 3 uploaded to Supabase:', image_url3);
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const result = await uploadProductImage(file.path, 'temp', i + 1);
+                
+                const ext = path.extname(file.originalname).toLowerCase();
+                let fileType = 'image';
+                if (ext === '.gif') {
+                    fileType = 'gif';
+                } else if (['.mp4', '.mov', '.avi', '.webm'].includes(ext)) {
+                    fileType = 'video';
+                } else if (['.pdf', '.doc', '.docx', '.txt', '.xls', '.xlsx'].includes(ext)) {
+                    fileType = 'document';
+                }
+                
+                mediaList.push({
+                    url: result.url,
+                    type: fileType
+                });
+                console.log(`Media ${i + 1} (${fileType}) uploaded to Supabase:`, result.url);
             }
         } catch (uploadError) {
-            console.error('Error uploading images to Supabase:', uploadError);
+            console.error('Error uploading media to Supabase:', uploadError);
             return res.status(500).json({
-                error: 'Failed to upload images to storage',
+                error: 'Failed to upload media to storage',
                 details: uploadError.message
             });
         }
+
+        const image_url = mediaList[0]?.url || null;
+        const image_url2 = mediaList[1]?.url || null;
+        const image_url3 = mediaList[2]?.url || null;
+        const image_url4 = mediaList[3]?.url || null;
 
         const newProduct = await pool.query(
             `INSERT INTO products (
                 name, description, price, category_id, category, stock_quantity,
                 usage_instructions, size, benefits, ingredients, product_details,
-                image_url, image_url2, image_url3, offer_percentage
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) 
+                image_url, image_url2, image_url3, image_url4, offer_percentage, media
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) 
             RETURNING *`,
             [
                 name,
@@ -452,7 +466,9 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
                 image_url,
                 image_url2,
                 image_url3,
-                offerNum
+                image_url4,
+                offerNum,
+                JSON.stringify(mediaList)
             ]
         );
 
@@ -508,7 +524,7 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
 });
 
 // Update product (admin only)
-router.put('/:id', adminAuth, uploadFields, async (req, res) => {
+router.put('/:id', adminAuth, uploadArray, async (req, res) => {
     try {
         const { id } = req.params;
         console.log('Updating product:', id);
@@ -528,15 +544,7 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             ingredients,
             product_details,
             offer_percentage,
-            existing_image1,
-            existing_image2,
-            existing_image3,
-            remove_image1,
-            remove_image2,
-            remove_image3,
-            replace_image1,
-            replace_image2,
-            replace_image3
+            existing_media
         } = req.body;
 
         // Sanitize category_id - it might come as an array or stringified array
@@ -571,88 +579,91 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             }
         }
 
-        // Get current images
-        const currentImages = await pool.query(
-            'SELECT image_url, image_url2, image_url3 FROM products WHERE id = $1',
+        // Get current product details
+        const currentProduct = await pool.query(
+            'SELECT image_url, image_url2, image_url3, image_url4, media FROM products WHERE id = $1',
             [id]
         );
 
-        if (currentImages.rows.length === 0) {
+        if (currentProduct.rows.length === 0) {
             return res.status(404).json({ error: 'Product not found' });
         }
 
-        const current = currentImages.rows[0];
+        const current = currentProduct.rows[0];
 
-        // Handle image updates - Upload new images to Supabase Storage
-        let image_url = current.image_url;
-        let image_url2 = current.image_url2;
-        let image_url3 = current.image_url3;
+        // 1. Determine existing media list
+        let finalMedia = [];
+        if (existing_media) {
+            try {
+                finalMedia = typeof existing_media === 'string' ? JSON.parse(existing_media) : existing_media;
+                if (!Array.isArray(finalMedia)) finalMedia = [];
+            } catch (err) {
+                console.error('Error parsing existing_media:', err);
+                finalMedia = [];
+            }
+        } else {
+            // Fallback: Retain database list if no existing_media is specified
+            finalMedia = Array.isArray(current.media) ? current.media : [];
+        }
 
+        // Identify which old media items were removed so we can delete them from Supabase if needed
+        // Exclude temporary placeholders starting with 'new_file_' when calculating kept URLs
+        const currentMediaList = Array.isArray(current.media) ? current.media : [];
+        const keptUrls = new Set(finalMedia.map(m => m.url).filter(url => url && !url.startsWith('new_file_')));
+        for (const item of currentMediaList) {
+            if (item.url && !keptUrls.has(item.url)) {
+                console.log('Deleting removed media from Supabase:', item.url);
+                await deleteImage(item.url);
+            }
+        }
+
+        // 2. Upload new media files
+        const files = req.files || [];
         try {
-            // Process new uploaded files first (these take priority)
-            if (req.files) {
-                if (req.files.image1 && req.files.image1[0]) {
-                    // Delete old image if it exists
-                    if (current.image_url) {
-                        await deleteImage(current.image_url);
-                    }
-                    // Upload new image to Supabase
-                    const result = await uploadProductImage(req.files.image1[0].path, id, 1);
-                    image_url = result.url;
-                    console.log('Replaced image1 with Supabase URL:', image_url);
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const result = await uploadProductImage(file.path, id, i + 1);
+                
+                const ext = path.extname(file.originalname).toLowerCase();
+                let fileType = 'image';
+                if (ext === '.gif') {
+                    fileType = 'gif';
+                } else if (['.mp4', '.mov', '.avi', '.webm'].includes(ext)) {
+                    fileType = 'video';
+                } else if (['.pdf', '.doc', '.docx', '.txt', '.xls', '.xlsx'].includes(ext)) {
+                    fileType = 'document';
                 }
-                if (req.files.image2 && req.files.image2[0]) {
-                    // Delete old image if it exists
-                    if (current.image_url2) {
-                        await deleteImage(current.image_url2);
-                    }
-                    // Upload new image to Supabase
-                    const result = await uploadProductImage(req.files.image2[0].path, id, 2);
-                    image_url2 = result.url;
-                    console.log('Replaced image2 with Supabase URL:', image_url2);
+                
+                // Replace the temporary placeholder in the stiched list with the actual Supabase URL
+                const placeholder = `new_file_${i}`;
+                const idx = finalMedia.findIndex(m => m.url === placeholder);
+                if (idx !== -1) {
+                    finalMedia[idx].url = result.url;
+                    finalMedia[idx].type = fileType;
+                    console.log(`Placed new file at stitched position ${idx + 1} using placeholder: ${placeholder}`);
+                } else {
+                    // Fallback to append at the end if the placeholder wasn't present
+                    finalMedia.push({
+                        url: result.url,
+                        type: fileType
+                    });
+                    console.log(`Appended new file directly since placeholder ${placeholder} was not found.`);
                 }
-                if (req.files.image3 && req.files.image3[0]) {
-                    // Delete old image if it exists
-                    if (current.image_url3) {
-                        await deleteImage(current.image_url3);
-                    }
-                    // Upload new image to Supabase
-                    const result = await uploadProductImage(req.files.image3[0].path, id, 3);
-                    image_url3 = result.url;
-                    console.log('Replaced image3 with Supabase URL:', image_url3);
-                }
+                console.log(`New media ${i + 1} (${fileType}) uploaded to Supabase:`, result.url);
             }
         } catch (uploadError) {
-            console.error('Error uploading images to Supabase:', uploadError);
+            console.error('Error uploading new media to Supabase:', uploadError);
             return res.status(500).json({
-                error: 'Failed to upload images to storage',
+                error: 'Failed to upload new media files',
                 details: uploadError.message
             });
         }
 
-        // Handle image removals
-        if (remove_image1 === 'true') {
-            if (current.image_url) {
-                await deleteImage(current.image_url);
-            }
-            image_url = null;
-            console.log('Removing image1');
-        }
-        if (remove_image2 === 'true') {
-            if (current.image_url2) {
-                await deleteImage(current.image_url2);
-            }
-            image_url2 = null;
-            console.log('Removing image2');
-        }
-        if (remove_image3 === 'true') {
-            if (current.image_url3) {
-                await deleteImage(current.image_url3);
-            }
-            image_url3 = null;
-            console.log('Removing image3');
-        }
-
+        // 3. Keep legacy columns populated for backward compatibility
+        const image_url = finalMedia[0]?.url || null;
+        const image_url2 = finalMedia[1]?.url || null;
+        const image_url3 = finalMedia[2]?.url || null;
+        const image_url4 = finalMedia[3]?.url || null;
 
         // Rest of the update logic
         let offerNum = 0;
@@ -691,10 +702,12 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
                 image_url = $11,
                 image_url2 = $12,
                 image_url3 = $13,
-                offer_percentage = $14,
-                category = COALESCE($15, category),
+                image_url4 = $14,
+                offer_percentage = $15,
+                category = COALESCE($16, category),
+                media = $17,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $16 
+            WHERE id = $18 
             RETURNING *
         `, [
             name,
@@ -710,9 +723,11 @@ router.put('/:id', adminAuth, uploadFields, async (req, res) => {
             image_url,
             image_url2,
             image_url3,
+            image_url4,
             offerNum,
-            categoryName, // $15 - Update the category name as well
-            id // $16
+            categoryName, // $16
+            JSON.stringify(finalMedia), // $17
+            id // $18
         ]);
 
         if (updatedProduct.rows.length === 0) {

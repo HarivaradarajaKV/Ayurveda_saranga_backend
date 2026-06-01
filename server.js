@@ -219,11 +219,8 @@ pool.connect((err, client, release) => {
         // Handle server errors
         server.on('error', (error) => {
             if (error.code === 'EADDRINUSE') {
-                console.error(`Port ${PORT} is already in use. Trying another port...`);
-                server.close();
-                const newPort = parseInt(PORT) + 1;
-                process.env.PORT = newPort;
-                server = app.listen(newPort);
+                console.error(`❌ Error: Port ${PORT} is already in use by another process. Exiting...`);
+                process.exit(1);
             } else {
                 console.error('Server error:', error);
             }
@@ -231,6 +228,10 @@ pool.connect((err, client, release) => {
 
         // Initialize WebSocket server
         const wss = new WebSocket.Server({ server });
+
+        wss.on('error', (err) => {
+            console.error('WebSocket Server error caught gracefully:', err);
+        });
 
         // Helper function to get user data
         async function getUserData(userId) {
