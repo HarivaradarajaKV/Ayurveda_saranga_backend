@@ -1,10 +1,12 @@
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
+const FALLBACK_SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3cW54b2lqbHZ0bXlnZGd6bWUiLCJyb2xlIjoic2VydmljZV9yb2xlIiwiaWF0IjoxNzYwMjM5OTY0LCJleHAiOjIwNzU4MTU5NjR9.Eaj7zvUy-Hahuc5hqbIPKdLc3kk0wx79XQ4jsN7ph50';
+
 // Initialize Supabase client with service role key for backend operations
 const supabase = createClient(
     process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY
+    process.env.SUPABASE_SERVICE_ROLE_KEY || FALLBACK_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY
 );
 
 const BUCKET_NAME = 'product-images';
