@@ -61,9 +61,29 @@ router.get('/storage-config', adminAuth, async (req, res) => {
 // Create secure signed upload URL (admin only)
 router.post('/signed-upload-url', adminAuth, async (req, res) => {
     try {
-        if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-            console.log('[Storage Config Info] SUPABASE_SERVICE_ROLE_KEY is not defined in backend environment variables. Using secure hardcoded service role key fallback.');
+        const token = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        const fallbackKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3cW54b2lqbHZ0bXlnZGd6bWUiLCJyb2xlIjoic2VydmljZV9yb2xlIiwiaWF0IjoxNzYwMjM5OTY0LCJleHAiOjIwNzU4MTU5NjR9.Eaj7zvUy-Hahuc5hqbIPKdLc3kk0wx79XQ4jsN7ph50';
+        const activeKey = token || fallbackKey;
+
+        let jwtInfo = {};
+        if (activeKey) {
+            try {
+                const parts = activeKey.split('.');
+                if (parts.length === 3) {
+                    const payloadJson = Buffer.from(parts[1], 'base64').toString('utf8');
+                    jwtInfo = JSON.parse(payloadJson);
+                }
+            } catch (err) {
+                console.error('Diagnostics JWT Decode Error:', err.message);
+            }
         }
+
+        console.log('[Storage Diagnostics]', {
+            SUPABASE_URL: process.env.SUPABASE_URL,
+            jwtRole: jwtInfo.role,
+            jwtRef: jwtInfo.ref,
+            keySource: token ? 'Vercel Env' : 'Hardcoded Fallback'
+        });
 
         const { fileName } = req.body;
         if (!fileName) {
@@ -74,7 +94,28 @@ router.post('/signed-upload-url', adminAuth, async (req, res) => {
         res.json(result);
     } catch (error) {
         console.error('Error generating signed URL:', error);
-        res.status(500).json({ error: error.message });
+        
+        // Enhance the error message with the decoded JWT diagnostics to guide the user perfectly
+        const token = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        const fallbackKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3cW54b2lqbHZ0bXlnZGd6bWUiLCJyb2xlIjoic2VydmljZV9yb2xlIiwiaWF0IjoxNzYwMjM5OTY0LCJleHAiOjIwNzU4MTU5NjR9.Eaj7zvUy-Hahuc5hqbIPKdLc3kk0wx79XQ4jsN7ph50';
+        const activeKey = token || fallbackKey;
+        let jwtInfo = {};
+        if (activeKey) {
+            try {
+                const parts = activeKey.split('.');
+                if (parts.length === 3) {
+                    const payloadJson = Buffer.from(parts[1], 'base64').toString('utf8');
+                    jwtInfo = JSON.parse(payloadJson);
+                }
+            } catch {}
+        }
+
+        let descriptiveError = error.message;
+        if (error.message.includes('signature verification failed') || error.message.includes('violates row-level security')) {
+            descriptiveError = `Supabase verification failed. JWT Role: ${jwtInfo.role || 'unknown'}, JWT Project Ref: ${jwtInfo.ref || 'unknown'}, Key Source: ${token ? 'Vercel Env' : 'Hardcoded Fallback'}. Please ensure the Vercel SUPABASE_SERVICE_ROLE_KEY environment variable is the correct Service Role Key matching SUPABASE_URL: ${process.env.SUPABASE_URL}`;
+        }
+
+        res.status(500).json({ error: descriptiveError });
     }
 });
 
