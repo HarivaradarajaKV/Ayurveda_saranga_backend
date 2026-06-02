@@ -158,7 +158,8 @@ async function uploadProductImage(filePath, productId, imageIndex) {
         if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
             try {
                 console.log('Squaring image/GIF to 2400x2400 at:', filePath);
-                const Jimp = require('jimp');
+                const jimpModule = require('jimp');
+                const Jimp = jimpModule.Jimp || jimpModule;
                 const img = await Jimp.read(filePath);
                 const size = Math.min(img.bitmap.width, img.bitmap.height);
                 const x = Math.round((img.bitmap.width - size) / 2);

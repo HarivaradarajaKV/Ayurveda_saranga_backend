@@ -609,9 +609,14 @@ router.put('/:id', adminAuth, uploadArray, async (req, res) => {
         // Identify which old media items were removed so we can delete them from Supabase if needed
         // Exclude temporary placeholders starting with 'new_file_' when calculating kept URLs
         const currentMediaList = Array.isArray(current.media) ? current.media : [];
-        const keptUrls = new Set(finalMedia.map(m => m.url).filter(url => url && !url.startsWith('new_file_')));
+        const keptUrls = new Set(
+            finalMedia
+                .filter(m => m && typeof m === 'object' && m.url)
+                .map(m => m.url)
+                .filter(url => typeof url === 'string' && !url.startsWith('new_file_'))
+        );
         for (const item of currentMediaList) {
-            if (item.url && !keptUrls.has(item.url)) {
+            if (item && typeof item === 'object' && item.url && !keptUrls.has(item.url)) {
                 console.log('Deleting removed media from Supabase:', item.url);
                 await deleteImage(item.url);
             }
@@ -636,7 +641,7 @@ router.put('/:id', adminAuth, uploadArray, async (req, res) => {
                 
                 // Replace the temporary placeholder in the stiched list with the actual Supabase URL
                 const placeholder = `new_file_${i}`;
-                const idx = finalMedia.findIndex(m => m.url === placeholder);
+                const idx = finalMedia.findIndex(m => m && typeof m === 'object' && m.url === placeholder);
                 if (idx !== -1) {
                     finalMedia[idx].url = result.url;
                     finalMedia[idx].type = fileType;
