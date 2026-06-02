@@ -373,11 +373,22 @@ router.post('/:id/payment-success', auth, async (req, res) => {
                 );
             }
 
-            // Clear user's cart
-            await client.query(
-                'DELETE FROM cart WHERE user_id = $1',
-                [req.user.id]
+            // Check if this is a donation order (contains item with product_id = 199 or category = 'Donation')
+            const isDonationResult = await client.query(
+                `SELECT 1 FROM order_items oi 
+                 JOIN products p ON oi.product_id = p.id 
+                 WHERE oi.order_id = $1 AND p.category = $2 
+                 LIMIT 1`,
+                [id, 'Donation']
             );
+
+            if (isDonationResult.rows.length === 0) {
+                // Clear user's cart only for regular orders
+                await client.query(
+                    'DELETE FROM cart WHERE user_id = $1',
+                    [req.user.id]
+                );
+            }
 
             await client.query('COMMIT');
 

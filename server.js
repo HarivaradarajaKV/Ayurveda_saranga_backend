@@ -102,6 +102,7 @@ const razorpayRouter = require('./routes/razorpay');
 const combosRouter = require('./routes/combos');
 const gstRouter = require('./routes/gst');
 const shiprocketRouter = require('./routes/shiprocket');
+const donationsRouter = require('./routes/donations');
 
 app.use('/api/auth', authRouter);
 app.use('/api/products', productsRouter);
@@ -121,6 +122,7 @@ app.use('/api/orders', require('./routes/orders'));
 app.use('/api/wishlist', require('./routes/wishlist'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/shiprocket', shiprocketRouter);
+app.use('/api/donations', donationsRouter);
 app.use('/orders', ordersRouter);
 
 // Test database endpoint

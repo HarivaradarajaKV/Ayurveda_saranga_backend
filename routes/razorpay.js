@@ -18,6 +18,111 @@ const razorpay = new Razorpay({
     key_secret: RAZORPAY_KEY_SECRET
 });
 
+// ─── Donations ────────────────────────────────────────────────────────────────
+// These two routes require NO authentication so they work for:
+//   • Anonymous donors (not logged in)
+//   • Vercel serverless deployments (no self-looping fetch needed)
+// All donation records are stored in the `donations` table, completely separate
+// from the `orders` table used for product purchases.
+
+// Step 1 – Create a Razorpay order for a donation and persist a pending record
+router.post('/create-donation', async (req, res) => {
+    try {
+        const { amount, donor_name, is_anonymous } = req.body;
+
+        if (!amount || Number(amount) <= 0) {
+            return res.status(400).json({ error: 'Invalid donation amount' });
+        }
+
+        const amountPaise = Math.round(Number(amount) * 100);
+        const resolvedName = is_anonymous ? 'Anonymous' : (donor_name || 'Anonymous');
+
+        // Create Razorpay order
+        const order = await razorpay.orders.create({
+            amount: amountPaise,
+            currency: 'INR',
+            receipt: `donation_${Date.now()}`,
+            payment_capture: 1,
+            notes: {
+                type: 'DONATION',            // easily distinguishable in Razorpay dashboard
+                donor_name: resolvedName,
+            },
+        });
+
+        // Persist pending donation row in DB
+        const dbResult = await pool.query(
+            `INSERT INTO donations
+                (razorpay_order_id, amount_paise, amount_rupees, currency, donor_name, is_anonymous, payment_status)
+             VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+             RETURNING id`,
+            [order.id, amountPaise, Number(amount), order.currency, resolvedName, Boolean(is_anonymous)]
+        );
+
+        const donationId = dbResult.rows[0].id;
+
+        res.json({
+            id: order.id,
+            amount: order.amount,
+            currency: order.currency,
+            key: RAZORPAY_KEY_ID,
+            key_id: RAZORPAY_KEY_ID,
+            donation_id: donationId,   // returned so the frontend can verify after payment
+        });
+    } catch (error) {
+        console.error('Error creating donation order:', error);
+        res.status(500).json({ error: error.message || 'Failed to create donation order' });
+    }
+});
+
+// Step 2 – Verify Razorpay signature for a donation and mark it as paid
+router.post('/verify-donation-payment', async (req, res) => {
+    try {
+        const { razorpay_order_id, razorpay_payment_id, razorpay_signature, donation_id } = req.body;
+
+        if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !donation_id) {
+            return res.status(400).json({ error: 'Missing required payment verification fields' });
+        }
+
+        // Verify HMAC signature
+        const crypto = require('crypto');
+        const generated_signature = crypto
+            .createHmac('sha256', RAZORPAY_KEY_SECRET)
+            .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+            .digest('hex');
+
+        if (generated_signature !== razorpay_signature) {
+            return res.status(400).json({ error: 'Invalid payment signature' });
+        }
+
+        // Update donation record to paid
+        const result = await pool.query(
+            `UPDATE donations
+             SET payment_status      = 'paid',
+                 razorpay_payment_id = $1,
+                 razorpay_signature  = $2,
+                 updated_at          = NOW()
+             WHERE id = $3
+             RETURNING *`,
+            [razorpay_payment_id, razorpay_signature, donation_id]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Donation record not found' });
+        }
+
+        res.json({
+            success: true,
+            message: 'Donation payment verified and recorded',
+            donation: result.rows[0],
+        });
+    } catch (error) {
+        console.error('Error verifying donation payment:', error);
+        res.status(500).json({ error: error.message || 'Payment verification failed' });
+    }
+});
+
+
+
 // Create a Razorpay order
 router.post('/create-order', auth, async (req, res) => {
     try {

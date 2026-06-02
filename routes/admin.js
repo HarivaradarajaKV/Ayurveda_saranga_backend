@@ -837,7 +837,7 @@ router.get('/new-arrivals', adminAuth, async (req, res) => {
                 p.name, 
                 p.price, 
                 p.image_url, 
-                p.is_new_arrival, 
+                CASE WHEN na.product_id IS NOT NULL THEN true ELSE false END as is_new_arrival, 
                 p.category_id,
                 COALESCE(
                     (
@@ -848,6 +848,7 @@ router.get('/new-arrivals', adminAuth, async (req, res) => {
                     '[]'::json
                 ) as category_ids
             FROM products p
+            LEFT JOIN new_arrivals na ON p.id = na.product_id
             ORDER BY p.name ASC
         `);
         res.json(result.rows);
@@ -868,17 +869,17 @@ router.post('/new-arrivals', adminAuth, async (req, res) => {
 
         await client.query('BEGIN');
 
-        // 1. Reset all products is_new_arrival flag
-        await client.query('UPDATE products SET is_new_arrival = false');
+        // 1. Reset all products in the new_arrivals table
+        await client.query('DELETE FROM new_arrivals');
 
-        // 2. Set new arrivals for selected IDs
+        // 2. Set new arrivals for selected IDs by inserting into new_arrivals
         if (product_ids.length > 0) {
             const safeIds = product_ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
             if (safeIds.length > 0) {
                 await client.query(`
-                    UPDATE products 
-                    SET is_new_arrival = true 
-                    WHERE id = ANY($1::integer[])
+                    INSERT INTO new_arrivals (product_id)
+                    SELECT * FROM UNNEST($1::integer[])
+                    ON CONFLICT DO NOTHING
                 `, [safeIds]);
             }
         }
@@ -888,6 +889,74 @@ router.post('/new-arrivals', adminAuth, async (req, res) => {
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error in post new-arrivals:', error);
+        res.status(500).json({ error: error.message });
+    } finally {
+        client.release();
+    }
+});
+
+
+// Get all products with best sellers status (for management list)
+router.get('/best-sellers', adminAuth, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                p.id, 
+                p.name, 
+                p.price, 
+                p.image_url, 
+                CASE WHEN bs.product_id IS NOT NULL THEN true ELSE false END as is_best_seller, 
+                p.category_id,
+                COALESCE(
+                    (
+                        SELECT json_agg(category_id)
+                        FROM product_categories
+                        WHERE product_id = p.id
+                    ),
+                    '[]'::json
+                ) as category_ids
+            FROM products p
+            LEFT JOIN best_sellers bs ON p.id = bs.product_id
+            ORDER BY p.name ASC
+        `);
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update best sellers (Bulk assign)
+router.post('/best-sellers', adminAuth, async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const { product_ids } = req.body;
+
+        if (!Array.isArray(product_ids)) {
+            return res.status(400).json({ error: 'product_ids must be an array' });
+        }
+
+        await client.query('BEGIN');
+
+        // 1. Reset all products in the best_sellers table
+        await client.query('DELETE FROM best_sellers');
+
+        // 2. Set best sellers for selected IDs by inserting into best_sellers
+        if (product_ids.length > 0) {
+            const safeIds = product_ids.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+            if (safeIds.length > 0) {
+                await client.query(`
+                    INSERT INTO best_sellers (product_id)
+                    SELECT * FROM UNNEST($1::integer[])
+                    ON CONFLICT DO NOTHING
+                `, [safeIds]);
+            }
+        }
+
+        await client.query('COMMIT');
+        res.json({ message: 'Best sellers updated successfully', count: product_ids.length });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error in post best-sellers:', error);
         res.status(500).json({ error: error.message });
     } finally {
         client.release();

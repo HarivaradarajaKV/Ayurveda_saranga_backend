@@ -119,6 +119,120 @@ router.post('/signed-upload-url', adminAuth, async (req, res) => {
     }
 });
 
+// Get only best seller products (dedicated public endpoint)
+router.get('/best-sellers', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT
+                p.id,
+                p.name,
+                p.description,
+                p.price,
+                p.category,
+                p.image_url,
+                p.image_url2,
+                p.image_url3,
+                p.image_url4,
+                p.usage_instructions,
+                p.size,
+                p.benefits,
+                p.ingredients,
+                p.product_details,
+                p.stock_quantity,
+                p.created_at,
+                p.offer_percentage,
+                true as is_best_seller,
+                c.name as category_name,
+                pc.name as parent_category_name,
+                COALESCE(AVG(r.rating), 0) as average_rating,
+                COUNT(DISTINCT r.id) as review_count,
+                (
+                    SELECT COALESCE(json_agg(json_build_object('id', c_sub.id, 'name', c_sub.name)), '[]')
+                    FROM product_categories pc_sub
+                    JOIN categories c_sub ON pc_sub.category_id = c_sub.id
+                    WHERE pc_sub.product_id = p.id
+                ) as categories
+            FROM best_sellers bs
+            JOIN products p ON bs.product_id = p.id
+            LEFT JOIN categories c ON p.category_id = c.id
+            LEFT JOIN categories pc ON c.parent_id = pc.id
+            LEFT JOIN reviews r ON p.id = r.product_id
+            GROUP BY p.id, c.name, pc.name, bs.created_at
+            ORDER BY bs.created_at DESC
+        `);
+
+        const products = result.rows.map(product => ({
+            ...product,
+            stock_quantity: product.stock_quantity || 0,
+            offer_percentage: product.offer_percentage || 0,
+            is_best_seller: true,
+            categories: product.categories || []
+        }));
+
+        res.json({ success: true, products, total: products.length });
+    } catch (error) {
+        console.error('Error fetching best sellers:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get only new arrival products (dedicated public endpoint)
+router.get('/new-arrivals', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT
+                p.id,
+                p.name,
+                p.description,
+                p.price,
+                p.category,
+                p.image_url,
+                p.image_url2,
+                p.image_url3,
+                p.image_url4,
+                p.usage_instructions,
+                p.size,
+                p.benefits,
+                p.ingredients,
+                p.product_details,
+                p.stock_quantity,
+                p.created_at,
+                p.offer_percentage,
+                true as is_new_arrival,
+                c.name as category_name,
+                pc.name as parent_category_name,
+                COALESCE(AVG(r.rating), 0) as average_rating,
+                COUNT(DISTINCT r.id) as review_count,
+                (
+                    SELECT COALESCE(json_agg(json_build_object('id', c_sub.id, 'name', c_sub.name)), '[]')
+                    FROM product_categories pc_sub
+                    JOIN categories c_sub ON pc_sub.category_id = c_sub.id
+                    WHERE pc_sub.product_id = p.id
+                ) as categories
+            FROM new_arrivals na
+            JOIN products p ON na.product_id = p.id
+            LEFT JOIN categories c ON p.category_id = c.id
+            LEFT JOIN categories pc ON c.parent_id = pc.id
+            LEFT JOIN reviews r ON p.id = r.product_id
+            GROUP BY p.id, c.name, pc.name, na.created_at
+            ORDER BY na.created_at DESC
+        `);
+
+        const products = result.rows.map(product => ({
+            ...product,
+            stock_quantity: product.stock_quantity || 0,
+            offer_percentage: product.offer_percentage || 0,
+            is_new_arrival: true,
+            categories: product.categories || []
+        }));
+
+        res.json({ success: true, products, total: products.length });
+    } catch (error) {
+        console.error('Error fetching new arrivals:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // Get all products with filters
 router.get('/', async (req, res) => {
     try {
@@ -131,6 +245,7 @@ router.get('/', async (req, res) => {
             skin_types,
             concerns,
             new_arrivals,
+            best_sellers,
             page = 1,
             limit = 10
         } = req.query;
@@ -154,7 +269,8 @@ router.get('/', async (req, res) => {
                 p.stock_quantity,
                 p.created_at,
                 p.offer_percentage,
-                p.is_new_arrival,
+                CASE WHEN na.product_id IS NOT NULL THEN true ELSE false END as is_new_arrival,
+                CASE WHEN bs.product_id IS NOT NULL THEN true ELSE false END as is_best_seller,
                 c.name as category_name,
                 pc.name as parent_category_name,
                 COALESCE(AVG(r.rating), 0) as average_rating,
@@ -169,6 +285,8 @@ router.get('/', async (req, res) => {
             LEFT JOIN categories c ON p.category_id = c.id
             LEFT JOIN categories pc ON c.parent_id = pc.id
             LEFT JOIN reviews r ON p.id = r.product_id
+            LEFT JOIN new_arrivals na ON p.id = na.product_id
+            LEFT JOIN best_sellers bs ON p.id = bs.product_id
             WHERE 1=1
         `;
         const queryParams = [];
@@ -237,11 +355,15 @@ router.get('/', async (req, res) => {
         }
 
         if (new_arrivals === 'true') {
-            query += ` AND p.is_new_arrival = true`;
+            query += ` AND na.product_id IS NOT NULL`;
+        }
+
+        if (best_sellers === 'true') {
+            query += ` AND bs.product_id IS NOT NULL`;
         }
 
         // Add group by clause
-        query += ` GROUP BY p.id, c.name, pc.name`;
+        query += ` GROUP BY p.id, c.name, pc.name, na.product_id, bs.product_id`;
 
         // Add sorting
         query += ` ORDER BY p.created_at DESC`;
@@ -263,7 +385,7 @@ router.get('/', async (req, res) => {
                 image_url2, image_url3, image_url4, usage_instructions, size,
                 benefits, ingredients, product_details, stock_quantity,
                 created_at, category_name, parent_category_name,
-                average_rating, review_count, offer_percentage, is_new_arrival, categories
+                average_rating, review_count, offer_percentage, is_new_arrival, is_best_seller, categories
             } = product;
 
             return {
@@ -289,6 +411,7 @@ router.get('/', async (req, res) => {
                 review_count,
                 offer_percentage: offer_percentage || 0,
                 is_new_arrival: is_new_arrival || false,
+                is_best_seller: is_best_seller || false,
                 categories: categories || []
             };
         });
@@ -333,6 +456,14 @@ router.get('/:id', async (req, res) => {
             return res.status(404).json({ error: 'Product not found' });
         }
 
+        // Dynamically resolve is_new_arrival from the dedicated new_arrivals table
+        const naCheck = await pool.query('SELECT 1 FROM new_arrivals WHERE product_id = $1', [id]);
+        const isNewArrival = naCheck.rows.length > 0;
+
+        // Dynamically resolve is_best_seller from the dedicated best_sellers table
+        const bsCheck = await pool.query('SELECT 1 FROM best_sellers WHERE product_id = $1', [id]);
+        const isBestSeller = bsCheck.rows.length > 0;
+
         // Get product reviews
         const reviews = await pool.query(`
             SELECT 
@@ -367,6 +498,8 @@ router.get('/:id', async (req, res) => {
 
         const result = {
             ...product.rows[0],
+            is_new_arrival: isNewArrival,  // Override with dynamically resolved value
+            is_best_seller: isBestSeller,  // Override with dynamically resolved value
             categories: categoriesResult.rows,
             reviews: reviews.rows,
             related_products: relatedProducts.rows
