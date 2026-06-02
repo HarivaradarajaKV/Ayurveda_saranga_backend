@@ -45,6 +45,19 @@ const uploadFields = upload.fields([
     { name: 'image3', maxCount: 1 }
 ]);
 
+// Get storage credentials (admin only)
+router.get('/storage-config', adminAuth, async (req, res) => {
+    try {
+        res.json({
+            supabaseUrl: process.env.SUPABASE_URL,
+            supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
+            bucketName: 'product-images'
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get all products with filters
 router.get('/', async (req, res) => {
     try {
@@ -406,10 +419,22 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
         }
 
 
+        // Handle pre-uploaded/existing media list (if direct-uploaded on client)
+        let mediaList = [];
+        if (req.body.existing_media) {
+            try {
+                mediaList = typeof req.body.existing_media === 'string' 
+                    ? JSON.parse(req.body.existing_media) 
+                    : req.body.existing_media;
+                if (!Array.isArray(mediaList)) mediaList = [];
+            } catch (err) {
+                console.error('Error parsing existing_media:', err);
+                mediaList = [];
+            }
+        }
+
         // Handle media uploads from files (images, gifs, videos)
         const files = req.files || [];
-        const mediaList = [];
-
         try {
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
@@ -429,7 +454,7 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
                     url: result.url,
                     type: fileType
                 });
-                console.log(`Media ${i + 1} (${fileType}) uploaded to Supabase:`, result.url);
+                console.log(`Media ${mediaList.length} (${fileType}) uploaded to Supabase:`, result.url);
             }
         } catch (uploadError) {
             console.error('Error uploading media to Supabase:', uploadError);
