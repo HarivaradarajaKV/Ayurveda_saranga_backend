@@ -241,12 +241,49 @@ async function checkStorageConfig() {
     }
 }
 
+/**
+ * Create a signed upload URL for secure client-side uploads
+ * @param {string} fileName - The desired name for the file
+ * @returns {Promise<{signedUrl: string, publicUrl: string, path: string}>}
+ */
+async function createSignedUploadUrl(fileName) {
+    try {
+        const timestamp = Date.now();
+        const fileExtension = fileName.split('.').pop();
+        const cleanName = fileName.split('.')[0].replace(/[^a-zA-Z0-9]/g, '_');
+        const uniqueFileName = `product-${timestamp}-${cleanName}.${fileExtension}`;
+
+        const { data, error } = await supabase.storage
+            .from(BUCKET_NAME)
+            .createSignedUploadUrl(uniqueFileName);
+
+        if (error) {
+            console.error('Supabase createSignedUploadUrl error:', error);
+            throw new Error(`Failed to create signed URL: ${error.message}`);
+        }
+
+        // Get public URL path
+        const { data: publicUrlData } = supabase.storage
+            .from(BUCKET_NAME)
+            .getPublicUrl(uniqueFileName);
+
+        return {
+            signedUrl: data.signedUrl,
+            publicUrl: publicUrlData.publicUrl,
+            path: uniqueFileName
+        };
+    } catch (error) {
+        console.error('Error in createSignedUploadUrl:', error);
+        throw error;
+    }
+}
+
 module.exports = {
     uploadImage,
     deleteImage,
     uploadProductImage,
     uploadCategoryImage,
-    checkStorageConfig,
+    createSignedUploadUrl,
     checkStorageConfig,
     BUCKET_NAME
 };

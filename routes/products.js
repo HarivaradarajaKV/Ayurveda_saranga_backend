@@ -3,7 +3,7 @@ const pool = require('../db');
 const { auth, adminAuth } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
-const { uploadProductImage, deleteImage } = require('../services/supabaseStorage');
+const { uploadProductImage, deleteImage, createSignedUploadUrl } = require('../services/supabaseStorage');
 
 const os = require('os');
 
@@ -54,6 +54,22 @@ router.get('/storage-config', adminAuth, async (req, res) => {
             bucketName: 'product-images'
         });
     } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Create secure signed upload URL (admin only)
+router.post('/signed-upload-url', adminAuth, async (req, res) => {
+    try {
+        const { fileName } = req.body;
+        if (!fileName) {
+            return res.status(400).json({ error: 'fileName is required' });
+        }
+
+        const result = await createSignedUploadUrl(fileName);
+        res.json(result);
+    } catch (error) {
+        console.error('Error generating signed URL:', error);
         res.status(500).json({ error: error.message });
     }
 });
