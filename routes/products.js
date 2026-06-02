@@ -61,6 +61,13 @@ router.get('/storage-config', adminAuth, async (req, res) => {
 // Create secure signed upload URL (admin only)
 router.post('/signed-upload-url', adminAuth, async (req, res) => {
     try {
+        if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+            console.warn('[Storage Config Warning] SUPABASE_SERVICE_ROLE_KEY is not defined in backend environment variables. Signed URL creation will fall back to anon key and fail due to RLS.');
+            return res.status(500).json({ 
+                error: 'SUPABASE_SERVICE_ROLE_KEY is missing in backend environment variables. Please add it to your Vercel Dashboard settings to enable secure direct uploads.' 
+            });
+        }
+
         const { fileName } = req.body;
         if (!fileName) {
             return res.status(400).json({ error: 'fileName is required' });
