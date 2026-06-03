@@ -28,7 +28,7 @@ const razorpay = new Razorpay({
 // Step 1 – Create a Razorpay order for a donation and persist a pending record
 router.post('/create-donation', async (req, res) => {
     try {
-        const { amount, donor_name, is_anonymous } = req.body;
+        const { amount, donor_name, is_anonymous, donor_phone } = req.body;
 
         if (!amount || Number(amount) <= 0) {
             return res.status(400).json({ error: 'Invalid donation amount' });
@@ -46,16 +46,17 @@ router.post('/create-donation', async (req, res) => {
             notes: {
                 type: 'DONATION',            // easily distinguishable in Razorpay dashboard
                 donor_name: resolvedName,
+                donor_phone: donor_phone || '',
             },
         });
 
         // Persist pending donation row in DB
         const dbResult = await pool.query(
             `INSERT INTO donations
-                (razorpay_order_id, amount_paise, amount_rupees, currency, donor_name, is_anonymous, payment_status)
-             VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+                (razorpay_order_id, amount_paise, amount_rupees, currency, donor_name, is_anonymous, donor_phone, payment_status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
              RETURNING id`,
-            [order.id, amountPaise, Number(amount), order.currency, resolvedName, Boolean(is_anonymous)]
+            [order.id, amountPaise, Number(amount), order.currency, resolvedName, Boolean(is_anonymous), donor_phone || null]
         );
 
         const donationId = dbResult.rows[0].id;

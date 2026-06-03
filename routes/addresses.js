@@ -126,6 +126,14 @@ router.put('/:id', auth, async (req, res) => {
             return res.status(404).json({ msg: 'Address not found or unauthorized' });
         }
 
+        // If setting this address as default, unset other defaults in database
+        if (is_default === true) {
+            await pool.query(
+                'UPDATE addresses SET is_default = false WHERE user_id = $1',
+                [req.user.id]
+            );
+        }
+
         const updatedAddress = await pool.query(
             `UPDATE addresses 
             SET full_name = COALESCE($1, full_name),
