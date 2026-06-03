@@ -8,7 +8,19 @@
     ],
     "routes": [
         {
-            "src": "/api/products.*",
+            "src": "/api/products(.*)",
+            "methods": ["GET"],
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+                "Vary": "Accept-Encoding"
+            },
+            "dest": "server.js"
+        },
+        {
+            "src": "/api/products(.*)",
             "headers": {
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
@@ -17,7 +29,61 @@
             "dest": "server.js"
         },
         {
-            "src": "/api/categories.*",
+            "src": "/api/categories(.*)",
+            "methods": ["GET"],
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                "Cache-Control": "public, s-maxage=120, stale-while-revalidate=300",
+                "Vary": "Accept-Encoding"
+            },
+            "dest": "server.js"
+        },
+        {
+            "src": "/api/categories(.*)",
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS"
+            },
+            "dest": "server.js"
+        },
+        {
+            "src": "/api/brand-reviews(.*)",
+            "methods": ["GET"],
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                "Cache-Control": "public, s-maxage=120, stale-while-revalidate=300",
+                "Vary": "Accept-Encoding"
+            },
+            "dest": "server.js"
+        },
+        {
+            "src": "/api/brand-reviews(.*)",
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS"
+            },
+            "dest": "server.js"
+        },
+        {
+            "src": "/api/combos(.*)",
+            "methods": ["GET"],
+            "headers": {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
+                "Vary": "Accept-Encoding"
+            },
+            "dest": "server.js"
+        },
+        {
+            "src": "/api/combos(.*)",
             "headers": {
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Authorization",
@@ -48,4 +114,4 @@
             "dest": "server.js"
         }
     ]
-} 
+}

@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const path = require('path');
 const fs = require('fs');
 const pool = require('./db');
@@ -7,6 +8,23 @@ const WebSocket = require('ws');
 require('dotenv').config();
 
 const app = express();
+
+// Enable gzip/brotli compression for all responses (reduces payload ~70%)
+app.use(compression({
+    level: 6, // Balanced speed vs compression ratio
+    threshold: 1024, // Only compress responses > 1KB
+    filter: (req, res) => {
+        if (req.headers['x-no-compression']) return false;
+        return compression.filter(req, res);
+    }
+}));
+
+// Enable HTTP keep-alive for persistent connections
+app.use((req, res, next) => {
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Keep-Alive', 'timeout=30, max=100');
+    next();
+});
 
 // WebSocket connections store
 const clients = new Map();
@@ -37,19 +55,43 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded files with cache headers for better performance
+// Serve uploaded files with aggressive cache headers for best performance
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
-    maxAge: '1y', // Cache for 1 year
-    etag: true, // Enable ETag for cache validation
-    lastModified: true, // Enable Last-Modified headers
-    setHeaders: (res, path) => {
-        // Set cache headers for image files
-        if (path.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
+    maxAge: '1y',
+    etag: true,
+    lastModified: true,
+    setHeaders: (res, filePath) => {
+        if (filePath.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
             res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
             res.setHeader('Expires', new Date(Date.now() + 31536000000).toUTCString());
+            res.setHeader('Vary', 'Accept-Encoding');
         }
     }
 }));
+
+// Cache-control helper for public API responses
+const setPublicCache = (res, seconds = 60) => {
+    res.setHeader('Cache-Control', `public, max-age=${seconds}, stale-while-revalidate=${seconds * 2}`);
+    res.setHeader('Vary', 'Accept-Encoding');
+};
+
+// Apply short-lived public caching to product/category list routes
+app.use('/api/products', (req, res, next) => {
+    if (req.method === 'GET') setPublicCache(res, 30);
+    next();
+});
+app.use('/api/categories', (req, res, next) => {
+    if (req.method === 'GET') setPublicCache(res, 120);
+    next();
+});
+app.use('/api/brand-reviews', (req, res, next) => {
+    if (req.method === 'GET') setPublicCache(res, 120);
+    next();
+});
+app.use('/api/combos', (req, res, next) => {
+    if (req.method === 'GET') setPublicCache(res, 60);
+    next();
+});
 
 // Ensure uploads directory exists
 const uploadDir = path.join(__dirname, 'uploads', 'profile-photos');
@@ -57,12 +99,11 @@ if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Request logging middleware
+// Lightweight request logging (no verbose headers/body to reduce CPU overhead)
+const IS_PROD = process.env.NODE_ENV === 'production';
 app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    console.log('Headers:', JSON.stringify(req.headers, null, 2));
-    if (req.method === 'POST') {
-        console.log('Body:', JSON.stringify(req.body, null, 2));
+    if (!IS_PROD) {
+        console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     }
     next();
 });
