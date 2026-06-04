@@ -448,10 +448,16 @@ router.post('/google-login', async (req, res) => {
             user = newUserResult.rows[0];
         } else {
             user = userResult.rows[0];
-            if (!user.is_verified) {
-                await pool.query('UPDATE users SET is_verified = true WHERE id = $1', [user.id]);
-                user.is_verified = true;
-            }
+            // Link existing user: mark verified, link SSO status, and sync profile photo if empty
+            await pool.query(
+                `UPDATE users 
+                 SET is_verified = true, 
+                     photo_url = COALESCE(photo_url, $1), 
+                     is_sso_user = true 
+                 WHERE id = $2`,
+                [picture || null, user.id]
+            );
+            user.is_verified = true;
         }
 
         // Issue JWT token
