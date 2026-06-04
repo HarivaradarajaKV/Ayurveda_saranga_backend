@@ -421,7 +421,9 @@ router.get('/', auth, async (req, res) => {
                 'product_id', oi.product_id,
                 'quantity', oi.quantity,
                 'price_at_time', oi.price_at_time,
+                'price', oi.price_at_time,
                 'product_name', p.name,
+                'image_url', p.image_url,
                 'gst_percentage', oi.gst_percentage,
                 'gst_amount', oi.gst_amount
             )) as items
@@ -470,7 +472,9 @@ router.get('/:id', auth, async (req, res) => {
                 'product_id', oi.product_id,
                 'quantity', oi.quantity,
                 'price_at_time', oi.price_at_time,
+                'price', oi.price_at_time,
                 'product_name', p.name,
+                'image_url', p.image_url,
                 'gst_percentage', oi.gst_percentage,
                 'gst_amount', oi.gst_amount
             )) as items
