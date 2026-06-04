@@ -427,7 +427,7 @@ router.post('/google-login', async (req, res) => {
 
         // Check if user already exists
         let userResult = await pool.query(
-            'SELECT id, email, name, role, is_verified FROM users WHERE email = $1',
+            'SELECT id, email, name, role, is_verified FROM users WHERE LOWER(email) = LOWER($1)',
             [email]
         );
 
@@ -443,7 +443,7 @@ router.post('/google-login', async (req, res) => {
                 `INSERT INTO users (email, password, name, is_verified, photo_url, is_sso_user) 
                  VALUES ($1, $2, $3, $4, $5, true) 
                  RETURNING id, email, name, role`,
-                [email, hashedPassword, name, true, picture]
+                [email.toLowerCase(), hashedPassword, name, true, picture]
             );
             user = newUserResult.rows[0];
         } else {
