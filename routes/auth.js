@@ -3,6 +3,8 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
 const nodemailer = require('nodemailer');
+const { OAuth2Client } = require('google-auth-library');
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Email configuration with fallback for missing credentials
 const transporter = nodemailer.createTransport({
@@ -386,6 +388,97 @@ router.post('/resend-otp', async (req, res) => {
     } catch (error) {
         console.error('Error resending OTP:', error);
         res.status(500).json({ error: error.message || 'Failed to resend verification code' });
+    }
+});
+
+// POST /google-login
+router.post('/google-login', async (req, res) => {
+    try {
+        const { idToken, accessToken } = req.body;
+        let email, name, picture;
+
+        if (idToken) {
+            // Verify ID Token (from Web app)
+            const ticket = await googleClient.verifyIdToken({
+                idToken: idToken,
+                audience: process.env.GOOGLE_CLIENT_ID,
+            });
+            const payload = ticket.getPayload();
+            email = payload.email;
+            name = payload.name;
+            picture = payload.picture;
+        } else if (accessToken) {
+            // Fetch profile using Access Token (from Mobile app / auth-session)
+            const response = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${accessToken}`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch user info from Google');
+            }
+            const payload = await response.json();
+            email = payload.email;
+            name = payload.name;
+            picture = payload.picture;
+        } else {
+            return res.status(400).json({ error: 'Google ID Token or Access Token is required' });
+        }
+
+        if (!email) {
+            return res.status(400).json({ error: 'Google account must share email access' });
+        }
+
+        // Check if user already exists
+        let userResult = await pool.query(
+            'SELECT id, email, name, role, is_verified FROM users WHERE email = $1',
+            [email]
+        );
+
+        let user;
+        if (userResult.rows.length === 0) {
+            // Create user
+            const crypto = require('crypto');
+            const randomPassword = crypto.randomBytes(16).toString('hex');
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(randomPassword, salt);
+
+            const newUserResult = await pool.query(
+                `INSERT INTO users (email, password, name, is_verified, photo_url, is_sso_user) 
+                 VALUES ($1, $2, $3, $4, $5, true) 
+                 RETURNING id, email, name, role`,
+                [email, hashedPassword, name, true, picture]
+            );
+            user = newUserResult.rows[0];
+        } else {
+            user = userResult.rows[0];
+            if (!user.is_verified) {
+                await pool.query('UPDATE users SET is_verified = true WHERE id = $1', [user.id]);
+                user.is_verified = true;
+            }
+        }
+
+        // Issue JWT token
+        const token = jwt.sign(
+            {
+                id: user.id,
+                role: user.role,
+                email: user.email,
+                name: user.name
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '24h' }
+        );
+
+        res.json({
+            token,
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                role: user.role,
+                photo_url: picture
+            }
+        });
+    } catch (error) {
+        console.error('Google login error:', error);
+        res.status(500).json({ error: error.message || 'Google login failed' });
     }
 });
 
