@@ -456,50 +456,44 @@ router.get('/:id', async (req, res) => {
             return res.status(404).json({ error: 'Product not found' });
         }
 
-        // Dynamically resolve is_new_arrival from the dedicated new_arrivals table
-        const naCheck = await pool.query('SELECT 1 FROM new_arrivals WHERE product_id = $1', [id]);
-        const isNewArrival = naCheck.rows.length > 0;
+        const productData = product.rows[0];
 
-        // Dynamically resolve is_best_seller from the dedicated best_sellers table
-        const bsCheck = await pool.query('SELECT 1 FROM best_sellers WHERE product_id = $1', [id]);
-        const isBestSeller = bsCheck.rows.length > 0;
-
-        // Get product reviews
-        const reviews = await pool.query(`
-            SELECT 
-                r.*,
-                u.name as user_name
-            FROM reviews r
-            JOIN users u ON r.user_id = u.id
-            WHERE r.product_id = $1
-            ORDER BY r.created_at DESC
-        `, [id]);
-
-        // Get related products from same category
-        const relatedProducts = await pool.query(`
-            SELECT 
-                p.*,
-                COALESCE(AVG(r.rating), 0) as average_rating,
-                COUNT(DISTINCT r.id) as review_count
-            FROM products p
-            LEFT JOIN reviews r ON p.id = r.product_id
-            WHERE p.category_id = $1 AND p.id != $2
-            GROUP BY p.id
-            LIMIT 5
-        `, [product.rows[0].category_id, id]);
-
-        // Get all categories for this product
-        const categoriesResult = await pool.query(`
-            SELECT c.id, c.name 
-            FROM product_categories pc
-            JOIN categories c ON pc.category_id = c.id
-            WHERE pc.product_id = $1
-        `, [id]);
+        // Execute remaining queries in parallel to drastically improve loading speed
+        const [naCheck, bsCheck, reviews, relatedProducts, categoriesResult] = await Promise.all([
+            pool.query('SELECT 1 FROM new_arrivals WHERE product_id = $1', [id]),
+            pool.query('SELECT 1 FROM best_sellers WHERE product_id = $1', [id]),
+            pool.query(`
+                SELECT 
+                    r.*,
+                    u.name as user_name
+                FROM reviews r
+                JOIN users u ON r.user_id = u.id
+                WHERE r.product_id = $1
+                ORDER BY r.created_at DESC
+            `, [id]),
+            pool.query(`
+                SELECT 
+                    p.*,
+                    COALESCE(AVG(r.rating), 0) as average_rating,
+                    COUNT(DISTINCT r.id) as review_count
+                FROM products p
+                LEFT JOIN reviews r ON p.id = r.product_id
+                WHERE p.category_id = $1 AND p.id != $2
+                GROUP BY p.id
+                LIMIT 5
+            `, [productData.category_id, id]),
+            pool.query(`
+                SELECT c.id, c.name 
+                FROM product_categories pc
+                JOIN categories c ON pc.category_id = c.id
+                WHERE pc.product_id = $1
+            `, [id])
+        ]);
 
         const result = {
-            ...product.rows[0],
-            is_new_arrival: isNewArrival,  // Override with dynamically resolved value
-            is_best_seller: isBestSeller,  // Override with dynamically resolved value
+            ...productData,
+            is_new_arrival: naCheck.rows.length > 0,
+            is_best_seller: bsCheck.rows.length > 0,
             categories: categoriesResult.rows,
             reviews: reviews.rows,
             related_products: relatedProducts.rows
@@ -1044,7 +1038,8 @@ router.delete('/:id', adminAuth, async (req, res) => {
 router.post('/:id/reviews', auth, async (req, res) => {
     try {
         const { id } = req.params;
-        const { rating, comment } = req.body;
+        const { rating } = req.body;
+        const comment = req.body.comment || req.body.review;
         const user_id = req.user.id;
 
         // Check if product exists
@@ -1107,7 +1102,8 @@ router.get('/:id/reviews', async (req, res) => {
 router.put('/:id/reviews/:reviewId', auth, async (req, res) => {
     try {
         const { id, reviewId } = req.params;
-        const { rating, comment } = req.body;
+        const { rating } = req.body;
+        const comment = req.body.comment || req.body.review;
         const user_id = req.user.id;
 
         // Verify the review exists and belongs to the user

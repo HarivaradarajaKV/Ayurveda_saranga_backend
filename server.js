@@ -279,14 +279,12 @@ pool.connect((err, client, release) => {
         // Helper function to get user data
         async function getUserData(userId) {
             try {
-                // Get cart items
-                const cartResult = await pool.query('SELECT * FROM cart_items WHERE user_id = $1', [userId]);
-
-                // Get wishlist items
-                const wishlistResult = await pool.query('SELECT * FROM wishlist_items WHERE user_id = $1', [userId]);
-
-                // Get user profile
-                const profileResult = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+                // Get cart, wishlist, and profile in parallel to optimize sync speed
+                const [cartResult, wishlistResult, profileResult] = await Promise.all([
+                    pool.query('SELECT * FROM cart_items WHERE user_id = $1', [userId]),
+                    pool.query('SELECT * FROM wishlist_items WHERE user_id = $1', [userId]),
+                    pool.query('SELECT * FROM users WHERE id = $1', [userId])
+                ]);
 
                 return {
                     cart: cartResult.rows,

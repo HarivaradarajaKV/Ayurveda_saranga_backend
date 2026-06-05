@@ -5,38 +5,23 @@ const { auth } = require('../middleware/auth');
 // Get all brand reviews
 router.get('/', async (req, res) => {
     try {
-        // First, check if the table exists
-        const tableCheck = await pool.query(`
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public'
-                AND table_name = 'brand_reviews'
-            );
-        `);
-
-        if (!tableCheck.rows[0].exists) {
-            return res.status(404).json({ 
-                error: 'Brand reviews table does not exist',
-                details: 'The brand_reviews table has not been created yet'
-            });
-        }
-
-        const reviews = await pool.query(`
-            SELECT 
-                br.*,
-                u.name as user_name,
-                COALESCE(u.avatar_url, '') as avatar_url
-            FROM brand_reviews br
-            JOIN users u ON br.user_id = u.id
-            ORDER BY br.created_at DESC
-        `);
-        
-        // Calculate average rating
-        const avgRating = await pool.query(`
-            SELECT COALESCE(AVG(rating)::numeric(10,1), 0) as average_rating, 
-                   COUNT(*) as review_count
-            FROM brand_reviews
-        `);
+        // Execute queries in parallel to drastically improve brand reviews loading speed
+        const [reviews, avgRating] = await Promise.all([
+            pool.query(`
+                SELECT 
+                    br.*,
+                    u.name as user_name,
+                    COALESCE(u.avatar_url, '') as avatar_url
+                FROM brand_reviews br
+                JOIN users u ON br.user_id = u.id
+                ORDER BY br.created_at DESC
+            `),
+            pool.query(`
+                SELECT COALESCE(AVG(rating)::numeric(10,1), 0) as average_rating, 
+                       COUNT(*) as review_count
+                FROM brand_reviews
+            `)
+        ]);
         
         res.json({
             reviews: reviews.rows || [],

@@ -10,8 +10,8 @@ const pool = new Pool(
               },
               // Force IPv4
               family: 4,
-              max: 20,
-              idleTimeoutMillis: 300000,
+              max: process.env.VERCEL ? 4 : 20, // Keep pool small in Vercel Serverless to prevent PgBouncer pool exhaustion
+              idleTimeoutMillis: process.env.VERCEL ? 15000 : 300000, // Release idle connections quickly in Vercel
               connectionTimeoutMillis: 30000, // Increased timeout
               keepAlive: true,
               keepAliveInitialDelayMillis: 10000,
