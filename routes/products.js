@@ -1103,4 +1103,66 @@ router.get('/:id/reviews', async (req, res) => {
     }
 });
 
+// Edit a review for a product (user owner only)
+router.put('/:id/reviews/:reviewId', auth, async (req, res) => {
+    try {
+        const { id, reviewId } = req.params;
+        const { rating, comment } = req.body;
+        const user_id = req.user.id;
+
+        // Verify the review exists and belongs to the user
+        const review = await pool.query(
+            'SELECT * FROM reviews WHERE id = $1 AND product_id = $2',
+            [reviewId, id]
+        );
+
+        if (review.rows.length === 0) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+
+        if (Number(review.rows[0].user_id) !== Number(user_id)) {
+            return res.status(403).json({ error: 'You are not authorized to edit this review' });
+        }
+
+        // Update the review
+        const updatedReview = await pool.query(
+            "UPDATE reviews SET rating = $1, comment = $2, updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') WHERE id = $3 RETURNING *",
+            [rating, comment, reviewId]
+        );
+
+        res.json({ success: true, review: updatedReview.rows[0] });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete a review for a product (user owner only)
+router.delete('/:id/reviews/:reviewId', auth, async (req, res) => {
+    try {
+        const { id, reviewId } = req.params;
+        const user_id = req.user.id;
+
+        // Verify the review exists and belongs to the user
+        const review = await pool.query(
+            'SELECT * FROM reviews WHERE id = $1 AND product_id = $2',
+            [reviewId, id]
+        );
+
+        if (review.rows.length === 0) {
+            return res.status(404).json({ error: 'Review not found' });
+        }
+
+        if (Number(review.rows[0].user_id) !== Number(user_id)) {
+            return res.status(403).json({ error: 'You are not authorized to delete this review' });
+        }
+
+        // Delete the review
+        await pool.query('DELETE FROM reviews WHERE id = $1', [reviewId]);
+
+        res.json({ success: true, message: 'Review deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 module.exports = router; 
