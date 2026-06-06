@@ -4,7 +4,19 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db');
 const nodemailer = require('nodemailer');
 const { OAuth2Client } = require('google-auth-library');
+
+// Client for verifying ID tokens (web app)
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// Client for full server-side OAuth flow (mobile app — needs client secret)
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI
+  || 'https://ayurveda-saranga-backend.vercel.app/api/auth/google/callback';
+
+const oauth2FlowClient = new OAuth2Client(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  GOOGLE_REDIRECT_URI
+);
 
 // Email configuration with fallback for missing credentials
 const transporter = nodemailer.createTransport({
@@ -391,7 +403,134 @@ router.post('/resend-otp', async (req, res) => {
     }
 });
 
-// POST /google-login
+// ─── GET /google ─────────────────────────────────────────────────────────────
+// Initiates Google OAuth. The mobile app opens this URL in the browser.
+// app_callback = the deep-link URL the backend will redirect to after auth
+//   e.g.  myapp://auth/callback  (production)
+//          exp://192.168.x.x:8081/--/auth/callback  (Expo Go)
+router.get('/google', (req, res) => {
+  try {
+    const { app_callback } = req.query;
+
+    // Encode app_callback in state so it survives the Google redirect round-trip
+    const statePayload = {
+      app_callback: app_callback || 'myapp://auth/callback',
+      ts: Date.now(),
+    };
+    const state = Buffer.from(JSON.stringify(statePayload)).toString('base64');
+
+    const authUrl = oauth2FlowClient.generateAuthUrl({
+      access_type: 'online',
+      scope: ['profile', 'email'],
+      state,
+      prompt: 'select_account',
+      redirect_uri: GOOGLE_REDIRECT_URI,
+    });
+
+    res.redirect(authUrl);
+  } catch (error) {
+    console.error('Google OAuth initiation error:', error);
+    res.status(500).json({ error: 'Failed to initiate Google Sign-In' });
+  }
+});
+
+// ─── GET /google/callback ─────────────────────────────────────────────────────
+// Google redirects here after the user grants permission.
+// Exchanges the auth code for tokens, creates/updates the user, issues a JWT,
+// then redirects to the mobile app via the deep-link in state.app_callback.
+router.get('/google/callback', async (req, res) => {
+  const DEFAULT_CALLBACK = 'myapp://auth/callback';
+  let app_callback = DEFAULT_CALLBACK;
+
+  try {
+    const { code, state, error: oauthError } = req.query;
+
+    // Recover app_callback from state
+    if (state) {
+      try {
+        const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
+        const allowed = ['myapp://', 'exp://'];  // security: only known schemes
+        if (decoded.app_callback && allowed.some(s => decoded.app_callback.startsWith(s))) {
+          app_callback = decoded.app_callback;
+        }
+      } catch (_) {
+        console.warn('Could not parse OAuth state');
+      }
+    }
+
+    if (oauthError) {
+      console.error('Google returned OAuth error:', oauthError);
+      return res.redirect(`${app_callback}?error=${encodeURIComponent(oauthError)}`);
+    }
+
+    if (!code) {
+      return res.redirect(`${app_callback}?error=no_code`);
+    }
+
+    // Exchange authorization code for Google tokens
+    const { tokens } = await oauth2FlowClient.getToken({ code, redirect_uri: GOOGLE_REDIRECT_URI });
+
+    // Fetch Google user profile
+    const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+    if (!profileRes.ok) throw new Error('Failed to fetch Google profile');
+    const { email, name, picture } = await profileRes.json();
+
+    if (!email) {
+      return res.redirect(`${app_callback}?error=no_email`);
+    }
+
+    // Look up or create the user
+    let userResult = await pool.query(
+      'SELECT id, email, name, role, is_verified FROM users WHERE LOWER(email) = LOWER($1)',
+      [email]
+    );
+
+    let user;
+    if (userResult.rows.length === 0) {
+      const crypto = require('crypto');
+      const randomPw = crypto.randomBytes(16).toString('hex');
+      const salt = await bcrypt.genSalt(10);
+      const hashed = await bcrypt.hash(randomPw, salt);
+
+      const inserted = await pool.query(
+        `INSERT INTO users (email, password, name, is_verified, photo_url, is_sso_user)
+         VALUES ($1, $2, $3, $4, $5, true) RETURNING id, email, name, role`,
+        [email.toLowerCase(), hashed, name || 'Google User', true, picture || null]
+      );
+      user = inserted.rows[0];
+    } else {
+      user = userResult.rows[0];
+      await pool.query(
+        `UPDATE users
+         SET is_verified = true,
+             photo_url   = COALESCE(photo_url, $1),
+             is_sso_user = true
+         WHERE id = $2`,
+        [picture || null, user.id]
+      );
+    }
+
+    // Issue 24-hour JWT
+    const jwtToken = jwt.sign(
+      { id: user.id, role: user.role, email: user.email, name: user.name },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    // Redirect back to the mobile app with the token
+    const destination = `${app_callback}?token=${encodeURIComponent(jwtToken)}`;
+    console.log('[Google OAuth] Success → redirecting to app scheme');
+    res.redirect(destination);
+
+  } catch (error) {
+    console.error('[Google OAuth] Callback error:', error);
+    res.redirect(`${app_callback}?error=${encodeURIComponent('Authentication failed')}`);
+  }
+});
+
+// POST /google-login (legacy — accepts access token or ID token from web app)
 router.post('/google-login', async (req, res) => {
     try {
         const { idToken, accessToken } = req.body;
