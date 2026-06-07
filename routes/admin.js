@@ -14,7 +14,9 @@ router.get('/stats', adminAuth, async (req, res) => {
                 (SELECT COUNT(*) FROM users WHERE role != 'admin') as total_users,
                 (SELECT COUNT(*) FROM products) as total_products,
                 (SELECT COUNT(*) FROM orders) as total_orders,
-                COALESCE((SELECT SUM(total_amount) FROM orders), 0) as total_revenue
+                COALESCE((SELECT SUM(total_amount) FROM orders), 0) as total_revenue,
+                (SELECT COUNT(*) FROM contact_submissions) as total_contacts,
+                (SELECT COUNT(*) FROM career_submissions) as total_careers
         `);
 
         res.json(stats.rows[0]);
