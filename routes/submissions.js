@@ -140,4 +140,28 @@ router.post('/career', uploadFields, async (req, res) => {
     }
 });
 
+const { adminAuth } = require('../middleware/auth');
+
+// GET /api/submissions/contact (Retrieve all Contact Us Submissions - Admin Only)
+router.get('/contact', adminAuth, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM contact_submissions ORDER BY created_at DESC');
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching contact submissions:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// GET /api/submissions/career (Retrieve all Career/Internship Applications - Admin Only)
+router.get('/career', adminAuth, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM career_submissions ORDER BY created_at DESC');
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching career submissions:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;
