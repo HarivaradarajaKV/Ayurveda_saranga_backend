@@ -14,8 +14,17 @@ router.post('/', auth, async (req, res) => {
             return res.status(400).json({ error: 'Invalid payment method' });
         }
 
-        // Clean up expired temporary orders (older than 15 minutes)
+        // Ensure pending_orders table exists and clean up stale data
         try {
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS pending_orders (
+                    id SERIAL PRIMARY KEY,
+                    razorpay_order_id VARCHAR(255) UNIQUE NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    order_data JSONB NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
             await pool.query(`
                 DELETE FROM order_items 
                 WHERE order_id IN (
@@ -29,8 +38,12 @@ router.post('/', auth, async (req, res) => {
                 WHERE is_temporary = true 
                   AND created_at < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') - INTERVAL '15 minutes'
             `);
+            await pool.query(`
+                DELETE FROM pending_orders 
+                WHERE created_at < NOW() - INTERVAL '2 hours'
+            `);
         } catch (cleanupErr) {
-            console.error('Error cleaning up expired temporary orders:', cleanupErr);
+            console.error('Error ensuring table or cleaning up:', cleanupErr);
         }
 
         // Start transaction
@@ -101,67 +114,12 @@ router.post('/', auth, async (req, res) => {
                 : 0;
 
             if (payment_method === 'online') {
-                // For online payment, create a temporary order first
-                const orderResult = await client.query(
-                    `INSERT INTO orders (
-                        user_id, 
-                        total_amount, 
-                        status, 
-                        shipping_address_line1, 
-                        shipping_address_line2, 
-                        shipping_city, 
-                        shipping_state, 
-                        shipping_postal_code, 
-                        shipping_country, 
-                        shipping_full_name, 
-                        shipping_phone_number,
-                        payment_method,
-                        payment_method_type,
-                        payment_status,
-                        is_temporary,
-                        delivery_charge,
-                        discount_amount,
-                        gst_percentage,
-                        gst_amount
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
-                    [
-                        user_id,
-                        finalTotal,
-                        'pending_payment',
-                        shipping_address.address_line1,
-                        shipping_address.address_line2,
-                        shipping_address.city,
-                        shipping_address.state,
-                        shipping_address.postal_code,
-                        shipping_address.country,
-                        shipping_address.full_name,
-                        shipping_address.phone_number,
-                        'online',
-                        'online',
-                        'pending',
-                        true,
-                        deliveryCharge,
-                        discountAmount,
-                        aggregatedGstPercentage,
-                        totalGstAmount
-                    ]
-                );
-                const order_id = orderResult.rows[0].id;
-                // Normalize timestamps to IST
-                await client.query(
-                    "UPDATE orders SET created_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'), updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') WHERE id = $1",
-                    [order_id]
-                );
+                // Rollback and release the client transaction since we won't insert to orders/order_items yet
+                await client.query('ROLLBACK');
+                client.release();
 
-                // Insert order items with GST snapshot
-                for (const item of computedItems) {
-                    await client.query(
-                        'INSERT INTO order_items (order_id, product_id, quantity, price_at_time, gst_percentage, gst_amount) VALUES ($1, $2, $3, $4, $5, $6)',
-                        [order_id, item.product_id, item.quantity, item.priceAtTime, item.gstPercentage, item.gstAmount]
-                    );
-                }
-
-                await client.query('COMMIT');
+                // Generate a temporary unique receipt ID
+                const temp_order_id = `temp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
                 // Create Razorpay order (work both locally and on Vercel)
                 const protoHeader = req.headers['x-forwarded-proto'];
@@ -180,7 +138,7 @@ router.post('/', auth, async (req, res) => {
                     },
                     body: JSON.stringify({
                         amount: total_amount,
-                        order_id: order_id
+                        order_id: temp_order_id
                     })
                 });
 
@@ -190,20 +148,27 @@ router.post('/', auth, async (req, res) => {
 
                 const razorpayOrder = await razorpayResponse.json();
 
-                // Persist Razorpay order id for later verification and reference
-                try {
-                    await pool.query(
-                        'UPDATE orders SET razorpay_order_id = $1 WHERE id = $2',
-                        [razorpayOrder.id, order_id]
-                    );
-                } catch (e) {
-                    console.warn('Failed to persist razorpay_order_id:', e?.message || e);
-                }
+                // Store the order details as a JSON payload in pending_orders table linked to the Razorpay order ID
+                const orderDataPayload = {
+                    total_amount: finalTotal,
+                    shipping_address,
+                    payment_method,
+                    delivery_charge,
+                    discount_amount,
+                    gst_percentage: aggregatedGstPercentage,
+                    gst_amount: totalGstAmount,
+                    items: computedItems
+                };
+
+                await pool.query(
+                    'INSERT INTO pending_orders (razorpay_order_id, user_id, order_data) VALUES ($1, $2, $3)',
+                    [razorpayOrder.id, user_id, JSON.stringify(orderDataPayload)]
+                );
 
                 return res.json({
                     message: 'Order initiated',
                     order: {
-                        id: order_id,
+                        id: razorpayOrder.id,
                         total_amount: finalTotal,
                         status: 'pending_payment',
                         shipping_address,
@@ -317,8 +282,17 @@ router.post('/', auth, async (req, res) => {
 router.post('/:id/cancel-payment', auth, async (req, res) => {
     try {
         const { id } = req.params;
-        const client = await pool.connect();
 
+        if (id && id.startsWith('order_')) {
+            // Delete from pending_orders session
+            await pool.query(
+                'DELETE FROM pending_orders WHERE razorpay_order_id = $1 AND user_id = $2',
+                [id, req.user.id]
+            );
+            return res.json({ message: 'Order cancelled successfully' });
+        }
+
+        const client = await pool.connect();
         try {
             await client.query('BEGIN');
 
@@ -359,6 +333,127 @@ router.post('/:id/payment-success', auth, async (req, res) => {
         const { id } = req.params;
         const { razorpay_payment_id, razorpay_order_id } = req.body;
 
+        const lookupOrderId = id.startsWith('order_') ? id : (razorpay_order_id || id);
+
+        // Try to look up the pending order details
+        const pendingResult = await pool.query(
+            'SELECT * FROM pending_orders WHERE razorpay_order_id = $1 AND user_id = $2',
+            [lookupOrderId, req.user.id]
+        );
+
+        if (pendingResult.rows.length > 0) {
+            const pendingOrderRow = pendingResult.rows[0];
+            const orderData = pendingOrderRow.order_data;
+
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+
+                // Create the permanent order
+                const orderResult = await client.query(
+                    `INSERT INTO orders (
+                        user_id, 
+                        total_amount, 
+                        status, 
+                        shipping_address_line1, 
+                        shipping_address_line2, 
+                        shipping_city, 
+                        shipping_state, 
+                        shipping_postal_code, 
+                        shipping_country, 
+                        shipping_full_name, 
+                        shipping_phone_number,
+                        payment_method,
+                        payment_method_type,
+                        payment_status,
+                        payment_id,
+                        razorpay_order_id,
+                        is_temporary,
+                        delivery_charge,
+                        discount_amount,
+                        gst_percentage,
+                        gst_amount
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING id`,
+                    [
+                        req.user.id,
+                        orderData.total_amount,
+                        'confirmed',
+                        orderData.shipping_address.address_line1,
+                        orderData.shipping_address.address_line2,
+                        orderData.shipping_address.city,
+                        orderData.shipping_address.state,
+                        orderData.shipping_address.postal_code,
+                        orderData.shipping_address.country,
+                        orderData.shipping_address.full_name,
+                        orderData.shipping_address.phone_number,
+                        'online',
+                        'online',
+                        'paid',
+                        razorpay_payment_id,
+                        lookupOrderId,
+                        false,
+                        orderData.delivery_charge,
+                        orderData.discount_amount,
+                        orderData.gst_percentage,
+                        orderData.gst_amount
+                    ]
+                );
+                const real_order_id = orderResult.rows[0].id;
+
+                // Normalize timestamps to IST
+                await client.query(
+                    "UPDATE orders SET created_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'), updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') WHERE id = $1",
+                    [real_order_id]
+                );
+
+                // Insert order items
+                for (const item of orderData.items) {
+                    await client.query(
+                        'INSERT INTO order_items (order_id, product_id, quantity, price_at_time, gst_percentage, gst_amount) VALUES ($1, $2, $3, $4, $5, $6)',
+                        [real_order_id, item.product_id, item.quantity, item.priceAtTime, item.gstPercentage, item.gstAmount]
+                    );
+
+                    // Update stock
+                    await client.query(
+                        'UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2',
+                        [item.quantity, item.product_id]
+                    );
+                }
+
+                // Check if this is a donation order (contains item with product_id = 199 or category = 'Donation')
+                const hasDonation = orderData.items.some(
+                    item => item.product_id === 199 || item.category === 'Donation'
+                );
+
+                if (!hasDonation) {
+                    // Clear user's cart only for regular orders
+                    await client.query(
+                        'DELETE FROM cart WHERE user_id = $1',
+                        [req.user.id]
+                    );
+                }
+
+                // Delete the pending order record
+                await client.query(
+                    'DELETE FROM pending_orders WHERE id = $1',
+                    [pendingOrderRow.id]
+                );
+
+                await client.query('COMMIT');
+
+                return res.json({
+                    message: 'Payment successful and order confirmed',
+                    order_id: real_order_id
+                });
+            } catch (err) {
+                await client.query('ROLLBACK');
+                throw err;
+            } finally {
+                client.release();
+            }
+        }
+
+        // Fallback to old behavior for backward compatibility
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
