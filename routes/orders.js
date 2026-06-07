@@ -129,8 +129,8 @@ router.post('/', auth, async (req, res) => {
                 client.release();
                 clientReleased = true;
 
-                // Generate a temporary unique receipt ID
-                const temp_order_id = `temp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+                // Generate a temporary unique receipt ID (must be under 40 chars for Razorpay)
+                const temp_receipt_id = `rcpt_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
                 // Create Razorpay order directly (avoids loopback fetch failures/deadlocks on Vercel and local environment)
                 let razorpayOrder;
@@ -138,13 +138,14 @@ router.post('/', auth, async (req, res) => {
                     const options = {
                         amount: Math.round(total_amount * 100), // Razorpay expects amount in paise
                         currency: 'INR',
-                        receipt: `order_${temp_order_id}_${Date.now()}`,
+                        receipt: temp_receipt_id,
                         payment_capture: 1
                     };
                     razorpayOrder = await razorpay.orders.create(options);
                 } catch (razorpayErr) {
                     console.error('Error creating Razorpay order directly:', razorpayErr);
-                    throw new Error('Failed to create Razorpay order: ' + razorpayErr.message);
+                    const errMsg = razorpayErr.error?.description || razorpayErr.message || JSON.stringify(razorpayErr) || String(razorpayErr);
+                    throw new Error('Failed to create Razorpay order: ' + errMsg);
                 }
 
                 // Store the order details as a JSON payload in pending_orders table linked to the Razorpay order ID
@@ -152,8 +153,8 @@ router.post('/', auth, async (req, res) => {
                     total_amount: finalTotal,
                     shipping_address,
                     payment_method,
-                    delivery_charge,
-                    discount_amount,
+                    delivery_charge: deliveryCharge,
+                    discount_amount: discountAmount,
                     gst_percentage: aggregatedGstPercentage,
                     gst_amount: totalGstAmount,
                     items: computedItems

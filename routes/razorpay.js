@@ -71,7 +71,8 @@ router.post('/create-donation', async (req, res) => {
         });
     } catch (error) {
         console.error('Error creating donation order:', error);
-        res.status(500).json({ error: error.message || 'Failed to create donation order' });
+        const errMsg = error.error?.description || error.message || 'Failed to create donation order';
+        res.status(500).json({ error: errMsg });
     }
 });
 
@@ -118,7 +119,8 @@ router.post('/verify-donation-payment', async (req, res) => {
         });
     } catch (error) {
         console.error('Error verifying donation payment:', error);
-        res.status(500).json({ error: error.message || 'Payment verification failed' });
+        const errMsg = error.error?.description || error.message || 'Payment verification failed';
+        res.status(500).json({ error: errMsg });
     }
 });
 
@@ -136,7 +138,7 @@ router.post('/create-order', auth, async (req, res) => {
         const options = {
             amount: Math.round(amount * 100), // Razorpay expects amount in paise
             currency: 'INR',
-            receipt: `order_${order_id}_${Date.now()}`,
+            receipt: `ord_${String(order_id).substring(0, 15)}_${Date.now()}`,
             payment_capture: 1
         };
 
@@ -152,7 +154,8 @@ router.post('/create-order', auth, async (req, res) => {
         });
     } catch (error) {
         console.error('Error creating Razorpay order:', error);
-        res.status(500).json({ error: error.message || 'Failed to create Razorpay order' });
+        const errMsg = error.error?.description || error.message || 'Failed to create Razorpay order';
+        res.status(500).json({ error: errMsg });
     }
 });
 
@@ -320,7 +323,47 @@ router.post('/verify-payment', auth, async (req, res) => {
         }
     } catch (error) {
         console.error('Error verifying payment:', error);
-        res.status(500).json({ error: error.message });
+        const errMsg = error.error?.description || error.message || 'Payment verification failed';
+        res.status(500).json({ error: errMsg });
+    }
+});
+
+// Diagnostics endpoint to check credentials and Razorpay connectivity
+router.get('/diagnose', async (req, res) => {
+    try {
+        const keyId = process.env.RAZORPAY_KEY_ID || 'rzp_live_RhzLf3BDT0rwrF';
+        const keySecret = process.env.RAZORPAY_KEY_SECRET || 'sFPjLlXXCGcreC1NifHOakJh';
+        
+        const testRazorpay = new Razorpay({
+            key_id: keyId,
+            key_secret: keySecret
+        });
+        
+        const order = await testRazorpay.orders.create({
+            amount: 100,
+            currency: 'INR',
+            receipt: 'diagnose_' + Date.now(),
+            payment_capture: 1
+        });
+        
+        res.json({
+            success: true,
+            key_id_configured: !!process.env.RAZORPAY_KEY_ID,
+            key_id_prefix: keyId.slice(0, 8) + '...',
+            key_secret_configured: !!process.env.RAZORPAY_KEY_SECRET,
+            key_secret_prefix: keySecret ? keySecret.slice(0, 4) + '...' : 'none',
+            order_created: order.id
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            key_id_configured: !!process.env.RAZORPAY_KEY_ID,
+            key_id_prefix: (process.env.RAZORPAY_KEY_ID || 'rzp_live_RhzLf3BDT0rwrF').slice(0, 8) + '...',
+            key_secret_configured: !!process.env.RAZORPAY_KEY_SECRET,
+            error_message: err.message,
+            error_stack: err.stack,
+            error_object: err
+        });
     }
 });
 
