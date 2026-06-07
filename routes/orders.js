@@ -14,6 +14,25 @@ router.post('/', auth, async (req, res) => {
             return res.status(400).json({ error: 'Invalid payment method' });
         }
 
+        // Clean up expired temporary orders (older than 15 minutes)
+        try {
+            await pool.query(`
+                DELETE FROM order_items 
+                WHERE order_id IN (
+                    SELECT id FROM orders 
+                    WHERE is_temporary = true 
+                      AND created_at < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') - INTERVAL '15 minutes'
+                )
+            `);
+            await pool.query(`
+                DELETE FROM orders 
+                WHERE is_temporary = true 
+                  AND created_at < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') - INTERVAL '15 minutes'
+            `);
+        } catch (cleanupErr) {
+            console.error('Error cleaning up expired temporary orders:', cleanupErr);
+        }
+
         // Start transaction
         const client = await pool.connect();
         try {

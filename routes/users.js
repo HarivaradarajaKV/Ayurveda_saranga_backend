@@ -48,7 +48,7 @@ router.get('/dashboard', auth, async (req, res) => {
             FROM orders o
             JOIN order_items oi ON o.id = oi.order_id
             JOIN products p ON oi.product_id = p.id
-            WHERE o.user_id = $1
+            WHERE o.user_id = $1 AND (o.is_temporary = false OR o.is_temporary IS NULL)
             GROUP BY o.id
             ORDER BY o.created_at DESC
             LIMIT 5
@@ -72,7 +72,7 @@ router.get('/dashboard', auth, async (req, res) => {
                 COUNT(*) as total_orders,
                 COALESCE(SUM(total_amount), 0) as total_spent
             FROM orders 
-            WHERE user_id = $1
+            WHERE user_id = $1 AND (is_temporary = false OR is_temporary IS NULL)
         `, [userId]);
 
         // Get recently viewed products with fixed query
@@ -83,7 +83,7 @@ router.get('/dashboard', auth, async (req, res) => {
             FROM products p
             JOIN order_items oi ON p.id = oi.product_id
             JOIN orders o ON oi.order_id = o.id
-            WHERE o.user_id = $1
+            WHERE o.user_id = $1 AND (o.is_temporary = false OR o.is_temporary IS NULL)
             ORDER BY order_date DESC
             LIMIT 5
         `, [userId]);

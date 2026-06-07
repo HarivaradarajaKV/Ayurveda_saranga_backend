@@ -30,7 +30,7 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
       FROM orders o
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN products p ON oi.product_id = p.id
-      WHERE o.id = $1
+      WHERE o.id = $1 AND (o.is_temporary = false OR o.is_temporary IS NULL)
       GROUP BY o.id
     `, [orderId]);
 
@@ -128,7 +128,7 @@ router.post('/assign-courier/:orderId', auth, adminAuth, async (req, res) => {
 
         // Get order with shipment ID
         const orderResult = await pool.query(
-            'SELECT * FROM orders WHERE id = $1',
+            'SELECT * FROM orders WHERE id = $1 AND (is_temporary = false OR is_temporary IS NULL)',
             [orderId]
         );
 
@@ -203,7 +203,7 @@ router.post('/request-pickup/:orderId', auth, adminAuth, async (req, res) => {
         const { orderId } = req.params;
 
         const orderResult = await pool.query(
-            'SELECT * FROM orders WHERE id = $1',
+            'SELECT * FROM orders WHERE id = $1 AND (is_temporary = false OR is_temporary IS NULL)',
             [orderId]
         );
 
@@ -252,7 +252,7 @@ router.get('/track/:orderId', auth, async (req, res) => {
         const { orderId } = req.params;
 
         const orderResult = await pool.query(
-            'SELECT * FROM orders WHERE id = $1 AND user_id = $2',
+            'SELECT * FROM orders WHERE id = $1 AND user_id = $2 AND (is_temporary = false OR is_temporary IS NULL)',
             [orderId, req.user.id]
         );
 
@@ -323,7 +323,7 @@ router.post('/generate-label/:orderId', auth, adminAuth, async (req, res) => {
         const { orderId } = req.params;
 
         const orderResult = await pool.query(
-            'SELECT * FROM orders WHERE id = $1',
+            'SELECT * FROM orders WHERE id = $1 AND (is_temporary = false OR is_temporary IS NULL)',
             [orderId]
         );
 

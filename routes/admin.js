@@ -13,8 +13,8 @@ router.get('/stats', adminAuth, async (req, res) => {
             SELECT 
                 (SELECT COUNT(*) FROM users WHERE role != 'admin') as total_users,
                 (SELECT COUNT(*) FROM products) as total_products,
-                (SELECT COUNT(*) FROM orders) as total_orders,
-                COALESCE((SELECT SUM(total_amount) FROM orders), 0) as total_revenue,
+                (SELECT COUNT(*) FROM orders WHERE is_temporary = false OR is_temporary IS NULL) as total_orders,
+                COALESCE((SELECT SUM(total_amount) FROM orders WHERE is_temporary = false OR is_temporary IS NULL), 0) as total_revenue,
                 (SELECT COUNT(*) FROM contact_submissions) as total_contacts,
                 (SELECT COUNT(*) FROM career_submissions) as total_careers
         `);
@@ -31,8 +31,8 @@ router.get('/users', adminAuth, async (req, res) => {
         const users = await pool.query(`
             SELECT 
                 id, name, email, role, created_at,
-                (SELECT COUNT(*) FROM orders WHERE user_id = users.id) as total_orders,
-                (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE user_id = users.id) as total_spent
+                (SELECT COUNT(*) FROM orders WHERE user_id = users.id AND (is_temporary = false OR is_temporary IS NULL)) as total_orders,
+                (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE user_id = users.id AND (is_temporary = false OR is_temporary IS NULL)) as total_spent
             FROM users
             WHERE role != 'admin'
             ORDER BY created_at DESC
@@ -75,7 +75,7 @@ router.get('/products', adminAuth, async (req, res) => {
             LEFT JOIN categories cat ON pc_link.category_id = cat.id
             LEFT JOIN reviews r ON p.id = r.product_id
             LEFT JOIN order_items oi ON p.id = oi.product_id
-            LEFT JOIN orders o ON oi.order_id = o.id
+            LEFT JOIN orders o ON oi.order_id = o.id AND (o.is_temporary = false OR o.is_temporary IS NULL)
             WHERE 1=1
         `;
         const queryParams = [];
@@ -161,6 +161,7 @@ router.get('/orders', adminAuth, async (req, res) => {
             JOIN users u ON o.user_id = u.id
             JOIN order_items oi ON o.id = oi.order_id
             JOIN products p ON oi.product_id = p.id
+            WHERE (o.is_temporary = false OR o.is_temporary IS NULL)
             GROUP BY o.id, u.name, u.email
             ORDER BY o.created_at DESC
         `);
@@ -261,7 +262,7 @@ router.get('/orders/export', adminAuth, async (req, res) => {
             FROM orders o
             JOIN order_items oi ON o.id = oi.order_id
             JOIN products p ON oi.product_id = p.id
-            WHERE 1=1 ${dateFilter}
+            WHERE (o.is_temporary = false OR o.is_temporary IS NULL) ${dateFilter}
             GROUP BY o.id
             ORDER BY o.created_at DESC
         `;
@@ -393,7 +394,7 @@ router.get('/analytics/products', adminAuth, async (req, res) => {
                 COUNT(DISTINCT w.id) as wishlist_count
             FROM products p
             LEFT JOIN order_items oi ON p.id = oi.product_id
-            LEFT JOIN orders o ON oi.order_id = o.id
+            LEFT JOIN orders o ON oi.order_id = o.id AND (o.is_temporary = false OR o.is_temporary IS NULL)
             LEFT JOIN reviews r ON p.id = r.product_id
             LEFT JOIN wishlist w ON p.id = w.product_id
             GROUP BY p.id
