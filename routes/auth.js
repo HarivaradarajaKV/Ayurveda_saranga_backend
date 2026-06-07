@@ -449,7 +449,13 @@ router.get('/google/callback', async (req, res) => {
     if (state) {
       try {
         const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
-        const allowed = ['myapp://', 'exp://'];  // security: only known schemes
+        const allowed = [
+          'myapp://', 
+          'exp://', 
+          'http://localhost', 
+          'https://sarangaayurveda.com', 
+          'https://www.sarangaayurveda.com'
+        ];  // security: only known schemes
         if (decoded.app_callback && allowed.some(s => decoded.app_callback.startsWith(s))) {
           app_callback = decoded.app_callback;
         }
