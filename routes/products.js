@@ -431,26 +431,45 @@ router.get('/', async (req, res) => {
     }
 });
 
-// Get product by id
+// Get product by id or slug
 router.get('/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        let product;
 
-        // Get product details with category information
-        const product = await pool.query(`
-            SELECT 
-                p.*,
-                c.name as category_name,
-                pc.name as parent_category_name,
-                COALESCE(AVG(r.rating), 0) as average_rating,
-                COUNT(DISTINCT r.id) as review_count
-            FROM products p
-            LEFT JOIN categories c ON p.category_id = c.id
-            LEFT JOIN categories pc ON c.parent_id = pc.id
-            LEFT JOIN reviews r ON p.id = r.product_id
-            WHERE p.id = $1
-            GROUP BY p.id, c.name, pc.name
-        `, [id]);
+        const isInteger = /^\d+$/.test(id);
+        if (isInteger) {
+            product = await pool.query(`
+                SELECT 
+                    p.*,
+                    c.name as category_name,
+                    pc.name as parent_category_name,
+                    COALESCE(AVG(r.rating), 0) as average_rating,
+                    COUNT(DISTINCT r.id) as review_count
+                FROM products p
+                LEFT JOIN categories c ON p.category_id = c.id
+                LEFT JOIN categories pc ON c.parent_id = pc.id
+                LEFT JOIN reviews r ON p.id = r.product_id
+                WHERE p.id = $1
+                GROUP BY p.id, c.name, pc.name
+            `, [parseInt(id)]);
+        } else {
+            product = await pool.query(`
+                SELECT 
+                    p.*,
+                    c.name as category_name,
+                    pc.name as parent_category_name,
+                    COALESCE(AVG(r.rating), 0) as average_rating,
+                    COUNT(DISTINCT r.id) as review_count
+                FROM products p
+                LEFT JOIN categories c ON p.category_id = c.id
+                LEFT JOIN categories pc ON c.parent_id = pc.id
+                LEFT JOIN reviews r ON p.id = r.product_id
+                WHERE TRIM(BOTH '-' FROM LOWER(REGEXP_REPLACE(p.name, '[^a-zA-Z0-9]+', '-', 'g'))) = $1
+                   OR LOWER(p.name) = LOWER(REPLACE($1, '-', ' '))
+                GROUP BY p.id, c.name, pc.name
+            `, [id]);
+        }
 
         if (product.rows.length === 0) {
             return res.status(404).json({ error: 'Product not found' });
@@ -458,10 +477,10 @@ router.get('/:id', async (req, res) => {
 
         const productData = product.rows[0];
 
-        // Execute remaining queries in parallel to drastically improve loading speed
+        // Execute remaining queries in parallel using productData.id to drastically improve loading speed and prevent cast issues
         const [naCheck, bsCheck, reviews, relatedProducts, categoriesResult] = await Promise.all([
-            pool.query('SELECT 1 FROM new_arrivals WHERE product_id = $1', [id]),
-            pool.query('SELECT 1 FROM best_sellers WHERE product_id = $1', [id]),
+            pool.query('SELECT 1 FROM new_arrivals WHERE product_id = $1', [productData.id]),
+            pool.query('SELECT 1 FROM best_sellers WHERE product_id = $1', [productData.id]),
             pool.query(`
                 SELECT 
                     r.*,
@@ -470,7 +489,7 @@ router.get('/:id', async (req, res) => {
                 JOIN users u ON r.user_id = u.id
                 WHERE r.product_id = $1
                 ORDER BY r.created_at DESC
-            `, [id]),
+            `, [productData.id]),
             pool.query(`
                 SELECT 
                     p.*,
@@ -481,13 +500,13 @@ router.get('/:id', async (req, res) => {
                 WHERE p.category_id = $1 AND p.id != $2
                 GROUP BY p.id
                 LIMIT 5
-            `, [productData.category_id, id]),
+            `, [productData.category_id, productData.id]),
             pool.query(`
                 SELECT c.id, c.name 
                 FROM product_categories pc
                 JOIN categories c ON pc.category_id = c.id
                 WHERE pc.product_id = $1
-            `, [id])
+            `, [productData.id])
         ]);
 
         const result = {
