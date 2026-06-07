@@ -2,6 +2,15 @@ const router = require('express').Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
 const fetch = require('node-fetch');
+const Razorpay = require('razorpay');
+
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_live_RhzLf3BDT0rwrF';
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || 'sFPjLlXXCGcreC1NifHOakJh';
+
+const razorpay = new Razorpay({
+    key_id: RAZORPAY_KEY_ID,
+    key_secret: RAZORPAY_KEY_SECRET
+});
 
 // Create a new order
 router.post('/', auth, async (req, res) => {
@@ -123,32 +132,20 @@ router.post('/', auth, async (req, res) => {
                 // Generate a temporary unique receipt ID
                 const temp_order_id = `temp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
-                // Create Razorpay order (work both locally and on Vercel)
-                const protoHeader = req.headers['x-forwarded-proto'];
-                const hostHeader = req.headers['x-forwarded-host'] || req.get('host');
-                const protocol = (protoHeader && Array.isArray(protoHeader) ? protoHeader[0] : protoHeader) || req.protocol || 'https';
-                const host = (hostHeader && Array.isArray(hostHeader) ? hostHeader[0] : hostHeader);
-                const envBase = process.env.BACKEND_URL || '';
-                const isLocalEnv = /localhost|127\.0\.0\.1/.test(envBase);
-                const baseUrl = (!envBase || isLocalEnv) && host ? `${protocol}://${host}` : envBase;
-
-                const razorpayResponse = await fetch(`${baseUrl}/api/razorpay/create-order`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': req.headers.authorization
-                    },
-                    body: JSON.stringify({
-                        amount: total_amount,
-                        order_id: temp_order_id
-                    })
-                });
-
-                if (!razorpayResponse.ok) {
-                    throw new Error('Failed to create Razorpay order');
+                // Create Razorpay order directly (avoids loopback fetch failures/deadlocks on Vercel and local environment)
+                let razorpayOrder;
+                try {
+                    const options = {
+                        amount: Math.round(total_amount * 100), // Razorpay expects amount in paise
+                        currency: 'INR',
+                        receipt: `order_${temp_order_id}_${Date.now()}`,
+                        payment_capture: 1
+                    };
+                    razorpayOrder = await razorpay.orders.create(options);
+                } catch (razorpayErr) {
+                    console.error('Error creating Razorpay order directly:', razorpayErr);
+                    throw new Error('Failed to create Razorpay order: ' + razorpayErr.message);
                 }
-
-                const razorpayOrder = await razorpayResponse.json();
 
                 // Store the order details as a JSON payload in pending_orders table linked to the Razorpay order ID
                 const orderDataPayload = {

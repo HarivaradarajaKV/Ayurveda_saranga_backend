@@ -170,7 +170,124 @@ router.post('/verify-payment', auth, async (req, res) => {
             .digest('hex');
 
         if (generated_signature === razorpay_signature) {
-            // Forward the request to the order payment success endpoint (support local and Vercel)
+            // Direct payment confirmation: try to resolve using pending_orders directly (no loopback fetch)
+            const pendingResult = await pool.query(
+                'SELECT * FROM pending_orders WHERE razorpay_order_id = $1 AND user_id = $2',
+                [razorpay_order_id, req.user.id]
+            );
+
+            if (pendingResult.rows.length > 0) {
+                const pendingOrderRow = pendingResult.rows[0];
+                const orderData = pendingOrderRow.order_data;
+
+                const client = await pool.connect();
+                try {
+                    await client.query('BEGIN');
+
+                    // Create the permanent order
+                    const orderResult = await client.query(
+                        `INSERT INTO orders (
+                            user_id, 
+                            total_amount, 
+                            status, 
+                            shipping_address_line1, 
+                            shipping_address_line2, 
+                            shipping_city, 
+                            shipping_state, 
+                            shipping_postal_code, 
+                            shipping_country, 
+                            shipping_full_name, 
+                            shipping_phone_number,
+                            payment_method,
+                            payment_method_type,
+                            payment_status,
+                            payment_id,
+                            razorpay_order_id,
+                            is_temporary,
+                            delivery_charge,
+                            discount_amount,
+                            gst_percentage,
+                            gst_amount
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING id`,
+                        [
+                            req.user.id,
+                            orderData.total_amount,
+                            'confirmed',
+                            orderData.shipping_address.address_line1,
+                            orderData.shipping_address.address_line2,
+                            orderData.shipping_address.city,
+                            orderData.shipping_address.state,
+                            orderData.shipping_address.postal_code,
+                            orderData.shipping_address.country,
+                            orderData.shipping_address.full_name,
+                            orderData.shipping_address.phone_number,
+                            'online',
+                            'online',
+                            'paid',
+                            razorpay_payment_id,
+                            razorpay_order_id,
+                            false,
+                            orderData.delivery_charge,
+                            orderData.discount_amount,
+                            orderData.gst_percentage,
+                            orderData.gst_amount
+                        ]
+                    );
+                    const real_order_id = orderResult.rows[0].id;
+
+                    // Normalize timestamps to IST
+                    await client.query(
+                        "UPDATE orders SET created_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'), updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata') WHERE id = $1",
+                        [real_order_id]
+                    );
+
+                    // Insert order items
+                    for (const item of orderData.items) {
+                        await client.query(
+                            'INSERT INTO order_items (order_id, product_id, quantity, price_at_time, gst_percentage, gst_amount) VALUES ($1, $2, $3, $4, $5, $6)',
+                            [real_order_id, item.product_id, item.quantity, item.priceAtTime, item.gstPercentage, item.gstAmount]
+                        );
+
+                        // Update stock
+                        await client.query(
+                            'UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2',
+                            [item.quantity, item.product_id]
+                        );
+                    }
+
+                    // Clear user's cart (except donation)
+                    const hasDonation = orderData.items.some(
+                        item => item.product_id === 199 || item.category === 'Donation'
+                    );
+
+                    if (!hasDonation) {
+                        await client.query(
+                            'DELETE FROM cart WHERE user_id = $1',
+                            [req.user.id]
+                        );
+                    }
+
+                    // Delete pending order cache
+                    await client.query(
+                        'DELETE FROM pending_orders WHERE id = $1',
+                        [pendingOrderRow.id]
+                    );
+
+                    await client.query('COMMIT');
+
+                    return res.json({
+                        message: 'Payment successful and order confirmed',
+                        order_id: real_order_id
+                    });
+                } catch (err) {
+                    await client.query('ROLLBACK');
+                    throw err;
+                } finally {
+                    client.release();
+                }
+            }
+
+            // Fallback: Forward the request to the order payment success endpoint (for backward compatibility)
             const protoHeader = req.headers['x-forwarded-proto'];
             const hostHeader = req.headers['x-forwarded-host'] || req.get('host');
             const protocol = (protoHeader && Array.isArray(protoHeader) ? protoHeader[0] : protoHeader) || req.protocol || 'https';
