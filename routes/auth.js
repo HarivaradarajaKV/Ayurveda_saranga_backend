@@ -403,6 +403,10 @@ router.post('/resend-otp', async (req, res) => {
     }
 });
 
+router.get('/google-check', (req, res) => {
+  res.json({ status: 'ok', msg: 'Google OAuth allowed origins updated' });
+});
+
 // ─── GET /google ─────────────────────────────────────────────────────────────
 // Initiates Google OAuth. The mobile app opens this URL in the browser.
 // app_callback = the deep-link URL the backend will redirect to after auth
