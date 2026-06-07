@@ -48,6 +48,7 @@ router.post('/', auth, async (req, res) => {
 
         // Start transaction
         const client = await pool.connect();
+        let clientReleased = false;
         try {
             await client.query('BEGIN');
 
@@ -117,6 +118,7 @@ router.post('/', auth, async (req, res) => {
                 // Rollback and release the client transaction since we won't insert to orders/order_items yet
                 await client.query('ROLLBACK');
                 client.release();
+                clientReleased = true;
 
                 // Generate a temporary unique receipt ID
                 const temp_order_id = `temp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
@@ -267,10 +269,18 @@ router.post('/', auth, async (req, res) => {
                 });
             }
         } catch (err) {
-            await client.query('ROLLBACK');
+            if (!clientReleased) {
+                try {
+                    await client.query('ROLLBACK');
+                } catch (rollbackErr) {
+                    console.error('Error rolling back database connection:', rollbackErr);
+                }
+            }
             throw err;
         } finally {
-            client.release();
+            if (!clientReleased) {
+                client.release();
+            }
         }
     } catch (error) {
         console.error('Error creating order:', error);
