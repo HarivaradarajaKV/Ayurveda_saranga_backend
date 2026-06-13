@@ -184,4 +184,37 @@ router.post('/profile/photo', auth, upload.single('photo'), async (req, res) => 
     }
 });
 
+// Delete user account
+router.delete('/profile', auth, async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const userId = req.user.id;
+
+        // Delete reviews first to prevent foreign key violations
+        await client.query('DELETE FROM reviews WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM brand_reviews WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM pending_orders WHERE user_id = $1', [userId]);
+
+        // Delete the user record
+        const deleteResult = await client.query(
+            'DELETE FROM users WHERE id = $1 RETURNING id',
+            [userId]
+        );
+
+        if (deleteResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        await client.query('COMMIT');
+        res.json({ message: 'Account deleted successfully' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: error.message });
+    } finally {
+        client.release();
+    }
+});
+
 module.exports = router; 
