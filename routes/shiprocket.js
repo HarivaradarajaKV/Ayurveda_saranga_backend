@@ -8,7 +8,7 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
     try {
         const { orderId } = req.params;
         const {
-            pickupLocation = 'Primary', // Your warehouse/store name in Shiprocket
+            pickupLocation = process.env.SHIPROCKET_PICKUP_LOCATION || 'warehouse', // Your warehouse/store name in Shiprocket
             length = 10,
             breadth = 10,
             height = 10,
@@ -19,12 +19,12 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
         const orderResult = await pool.query(`
       SELECT o.*, 
         json_agg(json_build_object(
-          'name', p.name,
-          'sku', p.id,
-          'units', oi.quantity,
-          'selling_price', oi.price_at_time,
+          'name', COALESCE(p.name, 'Ayurveda Product'),
+          'sku', COALESCE(p.id::text, oi.product_id::text, 'SKU-UNKNOWN'),
+          'units', COALESCE(oi.quantity, 1),
+          'selling_price', COALESCE(oi.price_at_time, 0),
           'discount', 0,
-          'tax', oi.gst_amount,
+          'tax', COALESCE(oi.gst_amount, 0),
           'hsn', 441122
         )) as items
       FROM orders o
@@ -60,12 +60,12 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
             billing_address: order.shipping_address_line1,
             billing_address_2: order.shipping_address_line2 || '',
             billing_city: order.shipping_city,
-            billing_pincode: order.shipping_postal_code,
-            billing_postcode: order.shipping_postal_code,
+            billing_pincode: order.shipping_postal_code || '560001',
+            billing_postcode: order.shipping_postal_code || '560001',
             billing_state: order.shipping_state,
             billing_country: order.shipping_country || 'India',
             billing_email: userEmail,
-            billing_phone: order.shipping_phone_number,
+            billing_phone: order.shipping_phone_number || '9999999999',
             shipping_is_billing: true,
             order_items: order.items,
             payment_method: order.payment_method === 'cod' ? 'COD' : 'Prepaid',
@@ -82,6 +82,16 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
         let shiprocketResponse;
         try {
             shiprocketResponse = await shiprocketService.createOrder(shiprocketOrderData);
+            
+            // Validate that we received a valid order creation response from Shiprocket
+            if (!shiprocketResponse || !shiprocketResponse.order_id) {
+                const errMsg = shiprocketResponse?.message || 'Invalid response from Shiprocket';
+                return res.status(400).json({
+                    success: false,
+                    error: 'Shiprocket Validation Error: ' + errMsg,
+                    details: shiprocketResponse
+                });
+            }
         } catch (apiError) {
             console.error('Shiprocket API Error:', apiError.response?.data || apiError.message);
             return res.status(400).json({
