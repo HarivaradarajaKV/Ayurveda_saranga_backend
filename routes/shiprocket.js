@@ -20,7 +20,7 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
       SELECT o.*, 
         json_agg(json_build_object(
           'name', COALESCE(p.name, 'Ayurveda Product'),
-          'sku', COALESCE(p.id::text, oi.product_id::text, 'SKU-UNKNOWN'),
+          'sku', '-',
           'units', COALESCE(oi.quantity, 1),
           'selling_price', COALESCE(oi.price_at_time, 0),
           'discount', 0,
