@@ -387,4 +387,63 @@ router.post('/webhook', async (req, res) => {
     }
 });
 
+// Reset/recreate shipment status for an order
+router.post('/reset-shipment/:orderId', auth, adminAuth, async (req, res) => {
+    try {
+        const { orderId } = req.params;
+
+        // Get order details to check if there is an existing Shiprocket order
+        const orderResult = await pool.query(
+            'SELECT shiprocket_order_id FROM orders WHERE id = $1 AND (is_temporary = false OR is_temporary IS NULL)',
+            [orderId]
+        );
+
+        if (orderResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        const { shiprocket_order_id } = orderResult.rows[0];
+        if (shiprocket_order_id) {
+            try {
+                // Try to cancel order on Shiprocket
+                await shiprocketService.cancelOrder([parseInt(shiprocket_order_id)]);
+                console.log(`Cancelled Shiprocket order ${shiprocket_order_id}`);
+            } catch (apiError) {
+                // Log and ignore apiError since order might not exist on Shiprocket
+                console.error('Failed to cancel order on Shiprocket, proceeding with local reset:', apiError.response?.data || apiError.message);
+            }
+        }
+
+        // Reset local Shiprocket columns in orders table
+        await pool.query(`
+            UPDATE orders 
+            SET shiprocket_order_id = NULL,
+                shiprocket_shipment_id = NULL,
+                shipment_status = NULL,
+                awb_number = NULL,
+                courier_id = NULL,
+                courier_name = NULL,
+                estimated_delivery_date = NULL,
+                tracking_url = NULL,
+                label_url = NULL,
+                manifest_url = NULL,
+                pickup_scheduled_date = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+        `, [orderId]);
+
+        res.json({
+            success: true,
+            message: 'Shipment details reset successfully. You can now recreate the shipment.'
+        });
+    } catch (error) {
+        console.error('Error resetting shipment:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to reset shipment'
+        });
+    }
+});
+
 module.exports = router;
+

@@ -194,6 +194,30 @@ class ShiprocketService {
         }
     }
 
+    // Cancel order
+    async cancelOrder(orderIds) {
+        try {
+            const token = await this.getToken();
+
+            const response = await axios.post(
+                `${this.baseURL}/orders/cancel`,
+                { ids: orderIds },
+                {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
+            return response.data;
+        } catch (error) {
+            console.error('Order cancellation failed:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+
     // Generate shipping label
     async generateLabel(shipmentIds) {
         try {
