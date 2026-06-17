@@ -11,7 +11,7 @@ router.get('/', adminAuth, async (req, res) => {
         let query = `
             SELECT id, razorpay_order_id, razorpay_payment_id,
                    amount_rupees, currency, donor_name, is_anonymous,
-                   payment_status, created_at, updated_at
+                   donor_phone, notes, payment_status, created_at, updated_at
             FROM donations
         `;
         const params = [];
