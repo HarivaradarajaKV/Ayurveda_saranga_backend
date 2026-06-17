@@ -3,37 +3,27 @@ const router = express.Router();
 const pool = require('../db');
 const { auth, adminAuth } = require('../middleware/auth');
 
-// GET /api/donations — Admin: list all donations with filters
+// GET /api/donations — Admin: list all successful donations
 router.get('/', adminAuth, async (req, res) => {
     try {
-        const { status, limit = 50, offset = 0 } = req.query;
+        const { limit = 50, offset = 0 } = req.query;
 
         let query = `
             SELECT id, razorpay_order_id, razorpay_payment_id,
                    amount_rupees, currency, donor_name, is_anonymous,
                    donor_phone, notes, payment_status, created_at, updated_at
             FROM donations
+            WHERE payment_status = 'paid'
         `;
         const params = [];
 
-        if (status) {
-            params.push(status);
-            query += ` WHERE payment_status = $${params.length}`;
-        }
-
-        query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+        query += ` ORDER BY created_at DESC LIMIT $1 OFFSET $2`;
         params.push(Number(limit), Number(offset));
 
         const result = await pool.query(query, params);
 
         // Total count for pagination
-        let countQuery = 'SELECT COUNT(*) FROM donations';
-        const countParams = [];
-        if (status) {
-            countParams.push(status);
-            countQuery += ` WHERE payment_status = $1`;
-        }
-        const countResult = await pool.query(countQuery, countParams);
+        const countResult = await pool.query("SELECT COUNT(*) FROM donations WHERE payment_status = 'paid'");
 
         res.json({
             donations: result.rows,
