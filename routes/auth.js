@@ -725,12 +725,34 @@ router.post('/apple', async (req, res) => {
     } else {
       user = userResult.rows[0];
 
-      // If existing user is named 'Apple User' or has no name, update it if clientName is provided
+      // Helper to check if name is a placeholder or default email prefix
+      const isDefaultOrPlaceholderName = (nameVal, emailVal) => {
+        if (!nameVal || nameVal === 'Apple User' || nameVal === 'Google User') return true;
+        if (!emailVal) return false;
+        
+        const prefix = emailVal.split('@')[0].toLowerCase();
+        const normalizedName = nameVal.toLowerCase().replace(/[\s\._\-]/g, '');
+        const normalizedPrefix = prefix.replace(/[\s\._\-]/g, '');
+        
+        if (normalizedName === normalizedPrefix) return true;
+        
+        // If it's the prefix followed only by digits
+        if (normalizedName.startsWith(normalizedPrefix) && /^\d*$/.test(normalizedName.slice(normalizedPrefix.length))) {
+          return true;
+        }
+        
+        // If name only contains digits
+        if (/^\d+$/.test(normalizedName)) return true;
+        
+        return false;
+      };
+
+      // If existing user has a default placeholder name or email prefix, update it if clientName is provided
       let nameToUpdate = user.name;
-      if (clientName && (!user.name || user.name === 'Apple User')) {
+      if (clientName && isDefaultOrPlaceholderName(user.name, email)) {
         nameToUpdate = clientName;
         user.name = clientName;
-      } else if (!user.name || user.name === 'Apple User') {
+      } else if (isDefaultOrPlaceholderName(user.name, email)) {
         // Fallback to name from email if name was not set yet
         if (email && !email.endsWith('@privaterelay.appleid.com')) {
           const parts = email.split('@')[0].split(/[\._\-]/);
