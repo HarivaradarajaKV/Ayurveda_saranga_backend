@@ -637,4 +637,124 @@ router.post('/google-login', async (req, res) => {
     }
 });
 
+// POST /apple (verifies Apple ID token and returns application JWT)
+router.post('/apple', async (req, res) => {
+  try {
+    const { identityToken, email: clientEmail, name: clientName } = req.body;
+
+    if (!identityToken) {
+      return res.status(400).json({ error: 'Apple Identity Token is required' });
+    }
+
+    // 1. Parse/Decode the JWT header to get the kid
+    const headerBase64 = identityToken.split('.')[0];
+    const header = JSON.parse(Buffer.from(headerBase64, 'base64').toString('utf8'));
+    const kid = header.kid;
+
+    if (!kid) {
+      return res.status(400).json({ error: 'Invalid Apple Identity Token header' });
+    }
+
+    // 2. Fetch Apple's public signing keys
+    const fetchFn = global.fetch || require('node-fetch');
+    const appleKeysResponse = await fetchFn('https://appleid.apple.com/auth/keys');
+    if (!appleKeysResponse.ok) {
+      throw new Error('Failed to fetch Apple public keys');
+    }
+    const { keys } = await appleKeysResponse.json();
+
+    // 3. Find matching JWK
+    const matchingKey = keys.find(k => k.kid === kid);
+    if (!matchingKey) {
+      return res.status(400).json({ error: 'No matching Apple public key found' });
+    }
+
+    // 4. Convert JWK to PEM format using native crypto module
+    const crypto = require('crypto');
+    const publicKey = crypto.createPublicKey({
+      key: matchingKey,
+      format: 'jwk'
+    });
+    const pem = publicKey.export({
+      type: 'pkcs1',
+      format: 'pem'
+    });
+
+    // 5. Cryptographically verify the token
+    const decoded = jwt.verify(identityToken, pem, {
+      algorithms: ['RS256'],
+      issuer: 'https://appleid.apple.com',
+      audience: 'com.AyurvedaSaranga.myapp'
+    });
+
+    const email = decoded.email;
+    if (!email) {
+      return res.status(400).json({ error: 'Apple account must share email access' });
+    }
+
+    // 6. Look up or create the user in the database
+    let userResult = await pool.query(
+      'SELECT id, email, name, role, is_verified FROM users WHERE LOWER(email) = LOWER($1)',
+      [email]
+    );
+
+    let user;
+    if (userResult.rows.length === 0) {
+      // Create a random password since it's an SSO user
+      const randomPassword = crypto.randomBytes(16).toString('hex');
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(randomPassword, salt);
+
+      // Determine a friendly name
+      const name = clientName || 'Apple User';
+
+      const newUserResult = await pool.query(
+        `INSERT INTO users (email, password, name, is_verified, is_sso_user) 
+         VALUES ($1, $2, $3, $4, true) 
+         RETURNING id, email, name, role`,
+        [email.toLowerCase(), hashedPassword, name, true]
+      );
+      user = newUserResult.rows[0];
+      console.log(`[Apple Auth] Created new SSO user: ${email}`);
+    } else {
+      user = userResult.rows[0];
+      // Mark as verified and is_sso_user
+      await pool.query(
+        `UPDATE users 
+         SET is_verified = true, 
+             is_sso_user = true 
+         WHERE id = $1`,
+        [user.id]
+      );
+      console.log(`[Apple Auth] Logged in existing user: ${email}`);
+    }
+
+    // 7. Issue a 24-hour application JWT
+    const token = jwt.sign(
+      {
+        id: user.id,
+        role: user.role,
+        email: user.email,
+        name: user.name
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role
+      }
+    });
+
+  } catch (error) {
+    console.error('Apple Sign-In error:', error);
+    res.status(500).json({ error: error.message || 'Apple login failed' });
+  }
+});
+
 module.exports = router; 
