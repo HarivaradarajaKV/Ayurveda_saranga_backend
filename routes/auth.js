@@ -684,7 +684,7 @@ router.post('/apple', async (req, res) => {
     const decoded = jwt.verify(identityToken, pem, {
       algorithms: ['RS256'],
       issuer: 'https://appleid.apple.com',
-      audience: 'com.AyurvedaSaranga.myapp'
+      audience: ['com.AyurvedaSaranga.myapp', 'host.exp.Exponent']
     });
 
     const email = decoded.email;
