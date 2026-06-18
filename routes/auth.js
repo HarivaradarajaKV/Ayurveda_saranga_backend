@@ -705,8 +705,14 @@ router.post('/apple', async (req, res) => {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(randomPassword, salt);
 
-      // Determine a friendly name
-      const name = clientName || 'Apple User';
+      // Determine a friendly name (try clientName first, then extract from email if not private relay, else fallback to 'Apple User')
+      let name = 'Apple User';
+      if (clientName) {
+        name = clientName;
+      } else if (email && !email.endsWith('@privaterelay.appleid.com')) {
+        const parts = email.split('@')[0].split(/[\._\-]/);
+        name = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+      }
 
       const newUserResult = await pool.query(
         `INSERT INTO users (email, password, name, is_verified, is_sso_user) 
@@ -718,13 +724,29 @@ router.post('/apple', async (req, res) => {
       console.log(`[Apple Auth] Created new SSO user: ${email}`);
     } else {
       user = userResult.rows[0];
-      // Mark as verified and is_sso_user
+
+      // If existing user is named 'Apple User' or has no name, update it if clientName is provided
+      let nameToUpdate = user.name;
+      if (clientName && (!user.name || user.name === 'Apple User')) {
+        nameToUpdate = clientName;
+        user.name = clientName;
+      } else if (!user.name || user.name === 'Apple User') {
+        // Fallback to name from email if name was not set yet
+        if (email && !email.endsWith('@privaterelay.appleid.com')) {
+          const parts = email.split('@')[0].split(/[\._\-]/);
+          nameToUpdate = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+          user.name = nameToUpdate;
+        }
+      }
+
+      // Mark as verified and is_sso_user (and update name if applicable)
       await pool.query(
         `UPDATE users 
          SET is_verified = true, 
-             is_sso_user = true 
-         WHERE id = $1`,
-        [user.id]
+             is_sso_user = true,
+             name = COALESCE($1, name)
+         WHERE id = $2`,
+        [nameToUpdate || 'Apple User', user.id]
       );
       console.log(`[Apple Auth] Logged in existing user: ${email}`);
     }
