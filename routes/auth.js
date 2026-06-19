@@ -730,8 +730,14 @@ router.post('/apple', async (req, res) => {
         if (!nameVal || nameVal === 'Apple User' || nameVal === 'Google User') return true;
         if (!emailVal) return false;
         
-        const prefix = emailVal.split('@')[0].toLowerCase();
-        const normalizedName = nameVal.toLowerCase().replace(/[\s\._\-]/g, '');
+        const nameLower = nameVal.toLowerCase().trim();
+        const emailLower = emailVal.toLowerCase().trim();
+        
+        // If the name is an email address (contains @ or matches email)
+        if (nameLower.includes('@') || nameLower === emailLower) return true;
+        
+        const prefix = emailLower.split('@')[0];
+        const normalizedName = nameLower.replace(/[\s\._\-]/g, '');
         const normalizedPrefix = prefix.replace(/[\s\._\-]/g, '');
         
         if (normalizedName === normalizedPrefix) return true;
