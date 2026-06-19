@@ -147,8 +147,9 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
         }
 
         // Prepare Shiprocket order data
+        // Append unique timestamp to order ID to prevent Shiprocket from rejecting / returning cached "CANCELED" states on reset/recreate
         const shiprocketOrderData = {
-            order_id: order.id.toString(),
+            order_id: order.id.toString() + '_' + Math.floor(Date.now() / 1000),
             order_date: new Date(order.created_at).toISOString().split('T')[0],
             pickup_location: pickupLocation,
             billing_customer_name: firstName,
