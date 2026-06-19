@@ -6,6 +6,9 @@
     "errors": {
       "billing_pincode": [
         "The billing postcode field is required"
+      ],
+      "billing_phone": [
+        "The billing phone field is required."
       ]
     },
     "status_code": 422

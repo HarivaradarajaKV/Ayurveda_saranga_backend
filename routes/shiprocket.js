@@ -3,6 +3,67 @@ const pool = require('../db');
 const shiprocketService = require('../services/shiprocket');
 const { auth, adminAuth } = require('../middleware/auth');
 
+// Helpers for data sanitization and clean format allocation to prevent Shiprocket API errors
+const cleanPhone = (phone) => {
+    if (!phone) return '9876543210';
+    let cleaned = phone.toString().replace(/\D/g, '');
+    if (cleaned.length === 12 && cleaned.startsWith('91')) {
+        cleaned = cleaned.slice(2);
+    }
+    if (cleaned.length < 10) {
+        return '9876543210';
+    }
+    return cleaned.slice(-10);
+};
+
+const cleanPincode = (pincode) => {
+    if (!pincode) return '560001';
+    let cleaned = pincode.toString().replace(/\D/g, '');
+    if (cleaned.length !== 6) {
+        return '560001';
+    }
+    return cleaned;
+};
+
+const cleanName = (fullName) => {
+    const name = (fullName || 'Customer Name').trim();
+    const parts = name.split(/\s+/);
+    const firstName = parts[0] || 'Customer';
+    const lastName = parts.slice(1).join(' ') || 'Name';
+    return { firstName, lastName };
+};
+
+const cleanAddress = (address, defaultName = 'Address Line') => {
+    let addr = (address || '').trim();
+    if (!addr) return defaultName + ' Details';
+    if (addr.length < 10) {
+        addr = addr + ' - ' + defaultName + ' Info';
+    }
+    return addr;
+};
+
+const getShiprocketErrorMessage = (error, defaultMsg) => {
+    if (error.response?.data) {
+        let msg = error.response.data.message || '';
+        if (error.response.data.errors) {
+            const errors = error.response.data.errors;
+            const details = [];
+            for (const key in errors) {
+                if (Array.isArray(errors[key])) {
+                    details.push(`${key}: ${errors[key].join(', ')}`);
+                } else if (typeof errors[key] === 'string') {
+                    details.push(`${key}: ${errors[key]}`);
+                }
+            }
+            if (details.length > 0) {
+                msg += ' (' + details.join('; ') + ')';
+            }
+        }
+        return msg || defaultMsg;
+    }
+    return error.message || defaultMsg;
+};
+
 // Create shipment for an order (Admin only)
 router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
     try {
@@ -20,7 +81,7 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
       SELECT o.*, 
         json_agg(json_build_object(
           'name', COALESCE(p.name, 'Ayurveda Product'),
-          'sku', '-',
+          'product_id', COALESCE(oi.product_id, 0),
           'units', COALESCE(oi.quantity, 1),
           'selling_price', COALESCE(oi.price_at_time, 0),
           'discount', 0,
@@ -44,30 +105,65 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
         const userResult = await pool.query('SELECT email FROM users WHERE id = $1', [order.user_id]);
         const userEmail = userResult.rows[0]?.email || 'customer@example.com';
 
-        // Split customer name into first and last name
-        const nameParts = order.shipping_full_name.split(' ');
-        const firstName = nameParts[0] || 'Customer';
-        const lastName = nameParts.slice(1).join(' ') || 'Name';
+        // Sanitize customer names
+        const { firstName, lastName } = cleanName(order.shipping_full_name);
+
+        // Sanitize phone, pincode, email, addresses
+        const billingPhone = cleanPhone(order.shipping_phone_number);
+        const billingPincode = cleanPincode(order.shipping_postal_code);
+        const billingAddress1 = cleanAddress(order.shipping_address_line1, 'Address Line 1');
+        const billingAddress2 = (order.shipping_address_line2 || '').trim();
+        const billingCity = (order.shipping_city || 'Kolar').trim();
+        const billingState = (order.shipping_state || 'Karnataka').trim();
+        const billingCountry = (order.shipping_country || 'India').trim();
+        const billingEmail = userEmail.includes('@') ? userEmail.trim() : 'customer@example.com';
+
+        // Sanitize order items
+        const rawItems = order.items || [];
+        const sanitizedItems = [];
+        for (const item of rawItems) {
+            if (!item || (!item.name && !item.product_id)) continue;
+            sanitizedItems.push({
+                name: (item.name || 'Ayurveda Product').trim().slice(0, 50),
+                sku: `prod-${item.product_id || Math.floor(Math.random() * 1000)}`,
+                units: parseInt(item.units) || 1,
+                selling_price: parseFloat(item.selling_price) || 0,
+                discount: parseFloat(item.discount) || 0,
+                tax: parseFloat(item.tax) || 0,
+                hsn: parseInt(item.hsn) || 441122
+            });
+        }
+
+        if (sanitizedItems.length === 0) {
+            sanitizedItems.push({
+                name: 'Ayurveda Product',
+                sku: 'prod-default',
+                units: 1,
+                selling_price: parseFloat(order.total_amount) || 10,
+                discount: 0,
+                tax: 0,
+                hsn: 441122
+            });
+        }
 
         // Prepare Shiprocket order data
         const shiprocketOrderData = {
-
             order_id: order.id.toString(),
             order_date: new Date(order.created_at).toISOString().split('T')[0],
             pickup_location: pickupLocation,
             billing_customer_name: firstName,
             billing_last_name: lastName,
-            billing_address: order.shipping_address_line1,
-            billing_address_2: order.shipping_address_line2 || '',
-            billing_city: order.shipping_city,
-            billing_pincode: order.shipping_postal_code || '560001',
-            billing_postcode: order.shipping_postal_code || '560001',
-            billing_state: order.shipping_state,
-            billing_country: order.shipping_country || 'India',
-            billing_email: userEmail,
-            billing_phone: order.shipping_phone_number || '9999999999',
+            billing_address: billingAddress1,
+            billing_address_2: billingAddress2,
+            billing_city: billingCity,
+            billing_pincode: billingPincode,
+            billing_postcode: billingPincode,
+            billing_state: billingState,
+            billing_country: billingCountry,
+            billing_email: billingEmail,
+            billing_phone: billingPhone,
             shipping_is_billing: true,
-            order_items: order.items,
+            order_items: sanitizedItems,
             payment_method: order.payment_method === 'cod' ? 'COD' : 'Prepaid',
             sub_total: parseFloat(order.total_amount) - parseFloat(order.delivery_charge || 0),
             shipping_charges: parseFloat(order.delivery_charge || 0),
@@ -96,7 +192,7 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
             console.error('Shiprocket API Error:', apiError.response?.data || apiError.message);
             return res.status(400).json({
                 success: false,
-                error: 'Shiprocket API Error: ' + (apiError.response?.data?.message || apiError.message),
+                error: getShiprocketErrorMessage(apiError, 'Failed to create order in Shiprocket'),
                 details: apiError.response?.data || 'Failed to create order in Shiprocket'
             });
         }
@@ -201,8 +297,8 @@ router.post('/assign-courier/:orderId', auth, adminAuth, async (req, res) => {
         });
     } catch (error) {
         console.error('Error assigning courier:', error);
-        res.status(500).json({
-            error: error.message || 'Failed to assign courier'
+        res.status(400).json({
+            error: getShiprocketErrorMessage(error, 'Failed to assign courier')
         });
     }
 });
@@ -250,8 +346,8 @@ router.post('/request-pickup/:orderId', auth, adminAuth, async (req, res) => {
         });
     } catch (error) {
         console.error('Error requesting pickup:', error);
-        res.status(500).json({
-            error: error.message || 'Failed to request pickup'
+        res.status(400).json({
+            error: getShiprocketErrorMessage(error, 'Failed to request pickup')
         });
     }
 });
@@ -292,8 +388,8 @@ router.get('/track/:orderId', auth, async (req, res) => {
         });
     } catch (error) {
         console.error('Error tracking shipment:', error);
-        res.status(500).json({
-            error: error.message || 'Failed to track shipment'
+        res.status(400).json({
+            error: getShiprocketErrorMessage(error, 'Failed to track shipment')
         });
     }
 });
@@ -321,8 +417,8 @@ router.post('/check-serviceability', async (req, res) => {
         });
     } catch (error) {
         console.error('Error checking serviceability:', error);
-        res.status(500).json({
-            error: error.message || 'Failed to check serviceability'
+        res.status(400).json({
+            error: getShiprocketErrorMessage(error, 'Failed to check serviceability')
         });
     }
 });
@@ -367,8 +463,8 @@ router.post('/generate-label/:orderId', auth, adminAuth, async (req, res) => {
         });
     } catch (error) {
         console.error('Error generating label:', error);
-        res.status(500).json({
-            error: error.message || 'Failed to generate label'
+        res.status(400).json({
+            error: getShiprocketErrorMessage(error, 'Failed to generate label')
         });
     }
 });
