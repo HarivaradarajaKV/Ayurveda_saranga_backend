@@ -481,7 +481,8 @@ router.get('/:id', adminAuth, async (req, res) => {
 router.post('/', adminAuth, async (req, res) => {
     const { 
         company_address_id, customer_address_id, invoice_date, due_date, transport, po_number, sales_person,
-        subtotal, discount, cgst, sgst, igst, grand_total, round_off, status, items 
+        subtotal, discount, cgst, sgst, igst, grand_total, round_off, status, items,
+        bank_name, bank_account_no, bank_ifsc, bank_branch
     } = req.body;
 
     if (!items || items.length === 0) {
@@ -523,12 +524,13 @@ router.post('/', adminAuth, async (req, res) => {
         // 2. Insert Invoice Header
         const headerRes = await client.query(
             `INSERT INTO invoices 
-             (invoice_number, company_address_id, customer_address_id, invoice_date, due_date, transport, po_number, sales_person, subtotal, discount, cgst, sgst, igst, grand_total, round_off, status, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+             (invoice_number, company_address_id, customer_address_id, invoice_date, due_date, transport, po_number, sales_person, subtotal, discount, cgst, sgst, igst, grand_total, round_off, status, created_by, bank_name, bank_account_no, bank_ifsc, bank_branch)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
              RETURNING *`,
             [
                 invoice_number, company_address_id, customer_address_id, invoice_date, due_date, transport, po_number, sales_person,
-                subtotal || 0, discount || 0, cgst || 0, sgst || 0, igst || 0, grand_total || 0, round_off || 0, status || 'draft', req.user?.id || null
+                subtotal || 0, discount || 0, cgst || 0, sgst || 0, igst || 0, grand_total || 0, round_off || 0, status || 'draft', req.user?.id || null,
+                bank_name || null, bank_account_no || null, bank_ifsc || null, bank_branch || null
             ]
         );
         const invoiceId = headerRes.rows[0].id;
@@ -597,39 +599,50 @@ router.post('/', adminAuth, async (req, res) => {
     }
 });
 
-// Update Invoice (Edit allowed only before approval/finalization)
 router.put('/:id', adminAuth, async (req, res) => {
     const { id } = req.params;
     const { 
         company_address_id, customer_address_id, invoice_date, due_date, transport, po_number, sales_person,
-        subtotal, discount, cgst, sgst, igst, grand_total, round_off, status, items 
+        subtotal, discount, cgst, sgst, igst, grand_total, round_off, status, items,
+        bank_name, bank_account_no, bank_ifsc, bank_branch
     } = req.body;
 
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
 
-        // Check if invoice exists and is still a draft
+        // Check if invoice exists
         const currentRes = await client.query('SELECT status, invoice_number FROM invoices WHERE id = $1 AND deleted_at IS NULL FOR UPDATE', [id]);
         if (currentRes.rows.length === 0) {
             return res.status(404).json({ error: 'Invoice not found' });
         }
 
         const currentInvoice = currentRes.rows[0];
+
+        // If the invoice was already finalized, restore stock levels first
         if (currentInvoice.status === 'finalized') {
-            return res.status(400).json({ error: 'Finalized invoices cannot be modified' });
+            const oldItems = await client.query('SELECT product_id, quantity, free_quantity FROM invoice_items WHERE invoice_id = $1', [id]);
+            for (const oldItem of oldItems.rows) {
+                const oldQty = parseInt(oldItem.quantity) + parseInt(oldItem.free_quantity || 0);
+                await client.query(
+                    'UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2',
+                    [oldQty, oldItem.product_id]
+                );
+            }
         }
 
         // Update Invoice Header
         const headerRes = await client.query(
             `UPDATE invoices 
              SET company_address_id = $1, customer_address_id = $2, invoice_date = $3, due_date = $4, transport = $5, po_number = $6, sales_person = $7,
-                 subtotal = $8, discount = $9, cgst = $10, sgst = $11, igst = $12, grand_total = $13, round_off = $14, status = $15
-             WHERE id = $16
+                 subtotal = $8, discount = $9, cgst = $10, sgst = $11, igst = $12, grand_total = $13, round_off = $14, status = $15,
+                 bank_name = $16, bank_account_no = $17, bank_ifsc = $18, bank_branch = $19
+             WHERE id = $20
              RETURNING *`,
             [
                 company_address_id, customer_address_id, invoice_date, due_date, transport, po_number, sales_person,
-                subtotal, discount, cgst, sgst, igst, grand_total, round_off, status, id
+                subtotal, discount, cgst, sgst, igst, grand_total, round_off, status,
+                bank_name || null, bank_account_no || null, bank_ifsc || null, bank_branch || null, id
             ]
         );
 
@@ -1056,10 +1069,14 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
         doc.moveTo(20, 614).lineTo(575, 614).stroke('#666');
         
         doc.fontSize(7.5).font('Helvetica-Bold').text('Bank Billing Information:', 30, 620);
-        doc.font('Helvetica').text('Bank Name: Axis Bank Ltd', 30, 632);
-        doc.text('Account Number: 924020025688924', 30, 642);
-        doc.text('IFSC Code: UTIB0000166', 30, 652);
-        doc.text('Branch: Jayanagar, Bengaluru', 30, 662);
+        if (invoice.bank_name) {
+            doc.font('Helvetica').text(`Bank Name: ${invoice.bank_name}`, 30, 632);
+            doc.text(`Account Number: ${invoice.bank_account_no}`, 30, 642);
+            doc.text(`IFSC Code: ${invoice.bank_ifsc}`, 30, 652);
+            doc.text(`Branch: ${invoice.bank_branch}`, 30, 662);
+        } else {
+            doc.font('Helvetica-Oblique').text('No bank details provided.', 30, 632);
+        }
 
         // Terms Divider
         doc.moveTo(297, 614).lineTo(297, 720).stroke('#666');
