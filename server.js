@@ -144,6 +144,7 @@ const combosRouter = require('./routes/combos');
 const gstRouter = require('./routes/gst');
 const shiprocketRouter = require('./routes/shiprocket');
 const donationsRouter = require('./routes/donations');
+const invoicesRouter = require('./routes/invoices');
 
 app.use('/api/auth', authRouter);
 app.use('/api/products', productsRouter);
@@ -155,6 +156,7 @@ app.use('/api/payments', paymentsRouter);
 app.use('/api/razorpay', razorpayRouter);
 app.use('/api/combos', combosRouter);
 app.use('/api/admin/combos', combosRouter);
+app.use('/api/admin/invoices', invoicesRouter);
 
 app.use('/api/cart', require('./routes/cart'));
 app.use('/api/admin', require('./routes/admin'));
