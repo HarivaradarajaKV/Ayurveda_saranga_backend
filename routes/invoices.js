@@ -849,8 +849,8 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
         doc.moveTo(20, 42).lineTo(575, 42).stroke('#666');
 
         // --- 2. HEADER: COMPANY & CUSTOMER (SIDE BY SIDE) ---
-        // Vertical divider
-        doc.moveTo(297, 42).lineTo(297, 190).stroke('#666');
+        // Vertical divider (terminates at metadata section divider Y=175)
+        doc.moveTo(297, 42).lineTo(297, 175).stroke('#666');
 
         // Left Side: Company Address details
         doc.fontSize(11).font('Helvetica-Bold').text(invoice.company_name.toUpperCase(), 30, 48);
@@ -948,7 +948,8 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
             doc.text(String(item.free_quantity || 0), cols.free.x, currentY, { width: cols.free.w, align: 'center' });
             
             // Prices / Numbers (subtract 3 from width for right padding)
-            doc.text(parseFloat(item.rate * 1.12).toFixed(2), cols.mrp.x, currentY, { width: cols.mrp.w - 3, align: 'right' }); // simulated MRP
+            const unitTaxable = parseFloat(item.rate) / (1 + parseFloat(item.gst_percentage) / 100);
+            doc.text(unitTaxable.toFixed(2), cols.mrp.x, currentY, { width: cols.mrp.w - 3, align: 'right' }); // unit price excluding GST
             doc.text(parseFloat(item.rate).toFixed(2), cols.rate.x, currentY, { width: cols.rate.w - 3, align: 'right' });
             
             // Discount
