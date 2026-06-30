@@ -274,38 +274,63 @@ router.put('/products/batches/:id', adminAuth, async (req, res) => {
 router.get('/products-search', adminAuth, async (req, res) => {
     const { q } = req.query;
     try {
+        let query = '';
+        let params = [];
+        
         if (!q || q.trim() === '') {
-            return res.json([]);
+            query = `
+                SELECT 
+                    p.id as product_id,
+                    p.name as product_name,
+                    p.sku,
+                    p.hsn_code,
+                    p.unit,
+                    p.price as default_selling_price,
+                    p.size as package_size,
+                    p.mfr as manufacturer,
+                    pb.id as batch_id,
+                    pb.batch_number,
+                    pb.expiry_date,
+                    pb.mrp,
+                    pb.selling_price as batch_selling_price,
+                    pb.stock_quantity as available_stock,
+                    COALESCE(g.percentage, 0.00) as gst_percentage
+                FROM products p
+                LEFT JOIN product_batches pb ON p.id = pb.product_id AND pb.deleted_at IS NULL
+                LEFT JOIN product_gst_rates g ON p.id = g.product_id
+                ORDER BY p.name ASC, pb.expiry_date ASC
+                LIMIT 30
+            `;
+        } else {
+            const searchTerm = `%${q}%`;
+            query = `
+                SELECT 
+                    p.id as product_id,
+                    p.name as product_name,
+                    p.sku,
+                    p.hsn_code,
+                    p.unit,
+                    p.price as default_selling_price,
+                    p.size as package_size,
+                    p.mfr as manufacturer,
+                    pb.id as batch_id,
+                    pb.batch_number,
+                    pb.expiry_date,
+                    pb.mrp,
+                    pb.selling_price as batch_selling_price,
+                    pb.stock_quantity as available_stock,
+                    COALESCE(g.percentage, 0.00) as gst_percentage
+                FROM products p
+                LEFT JOIN product_batches pb ON p.id = pb.product_id AND pb.deleted_at IS NULL
+                LEFT JOIN product_gst_rates g ON p.id = g.product_id
+                WHERE p.name ILIKE $1 OR p.sku ILIKE $1 OR pb.batch_number ILIKE $1
+                ORDER BY p.name ASC, pb.expiry_date ASC
+                LIMIT 50
+            `;
+            params = [searchTerm];
         }
         
-        // Search by Product Name, SKU, or Batch number
-        const searchTerm = `%${q}%`;
-        const query = `
-            SELECT 
-                p.id as product_id,
-                p.name as product_name,
-                p.sku,
-                p.hsn_code,
-                p.unit,
-                p.price as default_selling_price,
-                p.size as package_size,
-                p.mfr as manufacturer,
-                pb.id as batch_id,
-                pb.batch_number,
-                pb.expiry_date,
-                pb.mrp,
-                pb.selling_price as batch_selling_price,
-                pb.stock_quantity as available_stock,
-                COALESCE(g.percentage, 0.00) as gst_percentage
-            FROM products p
-            LEFT JOIN product_batches pb ON p.id = pb.product_id AND pb.deleted_at IS NULL
-            LEFT JOIN product_gst_rates g ON p.id = g.product_id
-            WHERE p.name ILIKE $1 OR p.sku ILIKE $1 OR pb.batch_number ILIKE $1
-            ORDER BY p.name ASC, pb.expiry_date ASC
-            LIMIT 50
-        `;
-        
-        const result = await pool.query(query, [searchTerm]);
+        const result = await pool.query(query, params);
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
