@@ -288,17 +288,11 @@ router.get('/products-search', adminAuth, async (req, res) => {
                     p.price as default_selling_price,
                     p.size as package_size,
                     p.mfr as manufacturer,
-                    pb.id as batch_id,
-                    pb.batch_number,
-                    pb.expiry_date,
-                    pb.mrp,
-                    pb.selling_price as batch_selling_price,
-                    pb.stock_quantity as available_stock,
+                    p.stock_quantity as available_stock,
                     COALESCE(g.percentage, 0.00) as gst_percentage
                 FROM products p
-                LEFT JOIN product_batches pb ON p.id = pb.product_id AND pb.deleted_at IS NULL
                 LEFT JOIN product_gst_rates g ON p.id = g.product_id
-                ORDER BY p.name ASC, pb.expiry_date ASC
+                ORDER BY p.name ASC
                 LIMIT 30
             `;
         } else {
@@ -313,18 +307,12 @@ router.get('/products-search', adminAuth, async (req, res) => {
                     p.price as default_selling_price,
                     p.size as package_size,
                     p.mfr as manufacturer,
-                    pb.id as batch_id,
-                    pb.batch_number,
-                    pb.expiry_date,
-                    pb.mrp,
-                    pb.selling_price as batch_selling_price,
-                    pb.stock_quantity as available_stock,
+                    p.stock_quantity as available_stock,
                     COALESCE(g.percentage, 0.00) as gst_percentage
                 FROM products p
-                LEFT JOIN product_batches pb ON p.id = pb.product_id AND pb.deleted_at IS NULL
                 LEFT JOIN product_gst_rates g ON p.id = g.product_id
-                WHERE p.name ILIKE $1 OR p.sku ILIKE $1 OR pb.batch_number ILIKE $1
-                ORDER BY p.name ASC, pb.expiry_date ASC
+                WHERE p.name ILIKE $1 OR p.sku ILIKE $1
+                ORDER BY p.name ASC
                 LIMIT 50
             `;
             params = [searchTerm];
@@ -548,54 +536,42 @@ router.post('/', adminAuth, async (req, res) => {
         // 3. Process items & update stock if status is finalized
         for (const item of items) {
             const { 
-                product_id, batch_id, quantity, free_quantity, rate, discount_percentage, discount_amount,
-                gst_percentage, gst_amount, taxable_amount, total_amount, expiry_date, batch_number 
+                product_id, quantity, free_quantity, rate, discount_percentage, discount_amount,
+                gst_percentage, gst_amount, taxable_amount, total_amount 
             } = item;
 
             // Enforce stock checks if finalizing
             if (status === 'finalized') {
-                if (!batch_id) {
-                    throw new Error(`A valid batch must be selected to finalize the sale of product ${product_id}`);
-                }
-
-                // Lock batch for update to handle race conditions
-                const batchRes = await client.query(
-                    'SELECT stock_quantity FROM product_batches WHERE id = $1 FOR UPDATE',
-                    [batch_id]
+                // Lock product for update to handle race conditions
+                const productRes = await client.query(
+                    'SELECT stock_quantity FROM products WHERE id = $1 FOR UPDATE',
+                    [product_id]
                 );
 
-                if (batchRes.rows.length === 0) {
-                    throw new Error(`Selected batch for product ID ${product_id} does not exist`);
+                if (productRes.rows.length === 0) {
+                    throw new Error(`Product ID ${product_id} does not exist`);
                 }
 
-                const availableStock = batchRes.rows[0].stock_quantity;
+                const availableStock = productRes.rows[0].stock_quantity || 0;
                 const requestedQty = parseInt(quantity) + parseInt(free_quantity || 0);
 
                 if (availableStock < requestedQty) {
-                    throw new Error(`Insufficient stock in batch "${batch_number}". Requested: ${requestedQty}, Available: ${availableStock}`);
+                    throw new Error(`Insufficient stock for product. Requested: ${requestedQty}, Available: ${availableStock}`);
                 }
 
                 // Subtract stock
                 const remainingStock = availableStock - requestedQty;
                 await client.query(
-                    'UPDATE product_batches SET stock_quantity = $1 WHERE id = $2',
-                    [remainingStock, batch_id]
+                    'UPDATE products SET stock_quantity = $1 WHERE id = $2',
+                    [remainingStock, product_id]
                 );
 
                 // Insert Stock Transaction log
                 await client.query(
                     `INSERT INTO stock_transactions 
                      (product_id, batch_id, invoice_id, transaction_type, quantity, balance_stock)
-                     VALUES ($1, $2, $3, 'sale', $4, $5)`,
-                    [product_id, batch_id, invoiceId, -requestedQty, remainingStock]
-                );
-
-                // Re-sync parent product inventory
-                await client.query(
-                    `UPDATE products 
-                     SET stock_quantity = COALESCE((SELECT SUM(stock_quantity) FROM product_batches WHERE product_id = $1 AND deleted_at IS NULL), 0)
-                     WHERE id = $1`,
-                    [product_id]
+                     VALUES ($1, NULL, $2, 'sale', $3, $4)`,
+                    [product_id, invoiceId, -requestedQty, remainingStock]
                 );
             }
 
@@ -603,10 +579,10 @@ router.post('/', adminAuth, async (req, res) => {
             await client.query(
                 `INSERT INTO invoice_items 
                  (invoice_id, product_id, batch_id, quantity, free_quantity, rate, discount_percentage, discount_amount, gst_percentage, gst_amount, taxable_amount, total_amount, expiry_date, batch_number)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                 VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL)`,
                 [
-                    invoiceId, product_id, batch_id || null, quantity, free_quantity || 0, rate, discount_percentage || 0, discount_amount || 0,
-                    gst_percentage, gst_amount, taxable_amount, total_amount, expiry_date || null, batch_number || null
+                    invoiceId, product_id, quantity, free_quantity || 0, rate, discount_percentage || 0, discount_amount || 0,
+                    gst_percentage, gst_amount, taxable_amount, total_amount
                 ]
             );
         }
@@ -663,53 +639,41 @@ router.put('/:id', adminAuth, async (req, res) => {
         // Process line items & stock reductions if transitioning to finalized
         for (const item of items) {
             const { 
-                product_id, batch_id, quantity, free_quantity, rate, discount_percentage, discount_amount,
-                gst_percentage, gst_amount, taxable_amount, total_amount, expiry_date, batch_number 
+                product_id, quantity, free_quantity, rate, discount_percentage, discount_amount,
+                gst_percentage, gst_amount, taxable_amount, total_amount 
             } = item;
 
             if (status === 'finalized') {
-                if (!batch_id) {
-                    throw new Error(`A valid batch must be selected to finalize the sale of product ${product_id}`);
-                }
-
-                // Lock batch
-                const batchRes = await client.query(
-                    'SELECT stock_quantity FROM product_batches WHERE id = $1 FOR UPDATE',
-                    [batch_id]
+                // Lock product
+                const productRes = await client.query(
+                    'SELECT stock_quantity FROM products WHERE id = $1 FOR UPDATE',
+                    [product_id]
                 );
 
-                if (batchRes.rows.length === 0) {
-                    throw new Error(`Batch ID ${batch_id} not found`);
+                if (productRes.rows.length === 0) {
+                    throw new Error(`Product ID ${product_id} not found`);
                 }
 
-                const availableStock = batchRes.rows[0].stock_quantity;
+                const availableStock = productRes.rows[0].stock_quantity || 0;
                 const requestedQty = parseInt(quantity) + parseInt(free_quantity || 0);
 
                 if (availableStock < requestedQty) {
-                    throw new Error(`Insufficient stock in batch "${batch_number}". Requested: ${requestedQty}, Available: ${availableStock}`);
+                    throw new Error(`Insufficient stock. Requested: ${requestedQty}, Available: ${availableStock}`);
                 }
 
                 // Deduct stock
                 const remainingStock = availableStock - requestedQty;
                 await client.query(
-                    'UPDATE product_batches SET stock_quantity = $1 WHERE id = $2',
-                    [remainingStock, batch_id]
+                    'UPDATE products SET stock_quantity = $1 WHERE id = $2',
+                    [remainingStock, product_id]
                 );
 
                 // Insert Stock Transaction
                 await client.query(
                     `INSERT INTO stock_transactions 
                      (product_id, batch_id, invoice_id, transaction_type, quantity, balance_stock)
-                     VALUES ($1, $2, $3, 'sale', $4, $5)`,
-                    [product_id, batch_id, id, -requestedQty, remainingStock]
-                );
-
-                // Sync main inventory
-                await client.query(
-                    `UPDATE products 
-                     SET stock_quantity = COALESCE((SELECT SUM(stock_quantity) FROM product_batches WHERE product_id = $1 AND deleted_at IS NULL), 0)
-                     WHERE id = $1`,
-                    [product_id]
+                     VALUES ($1, NULL, $2, 'sale', $3, $4)`,
+                    [product_id, id, -requestedQty, remainingStock]
                 );
             }
 
@@ -717,10 +681,10 @@ router.put('/:id', adminAuth, async (req, res) => {
             await client.query(
                 `INSERT INTO invoice_items 
                  (invoice_id, product_id, batch_id, quantity, free_quantity, rate, discount_percentage, discount_amount, gst_percentage, gst_amount, taxable_amount, total_amount, expiry_date, batch_number)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                 VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL)`,
                 [
-                    id, product_id, batch_id || null, quantity, free_quantity || 0, rate, discount_percentage || 0, discount_amount || 0,
-                    gst_percentage, gst_amount, taxable_amount, total_amount, expiry_date || null, batch_number || null
+                    id, product_id, quantity, free_quantity || 0, rate, discount_percentage || 0, discount_amount || 0,
+                    gst_percentage, gst_amount, taxable_amount, total_amount
                 ]
             );
         }
@@ -752,38 +716,28 @@ router.delete('/:id', adminAuth, async (req, res) => {
 
         // Restore stock if the invoice was finalized
         if (invoice.status === 'finalized') {
-            const itemsRes = await client.query('SELECT product_id, batch_id, quantity, free_quantity, batch_number FROM invoice_items WHERE invoice_id = $1', [id]);
+            const itemsRes = await client.query('SELECT product_id, quantity, free_quantity FROM invoice_items WHERE invoice_id = $1', [id]);
             
             for (const item of itemsRes.rows) {
-                if (item.batch_id) {
-                    const totalQty = parseInt(item.quantity) + parseInt(item.free_quantity || 0);
+                const totalQty = parseInt(item.quantity) + parseInt(item.free_quantity || 0);
 
-                    // Add back stock
-                    await client.query(
-                        'UPDATE product_batches SET stock_quantity = stock_quantity + $1 WHERE id = $2',
-                        [totalQty, item.batch_id]
-                    );
+                // Add back stock
+                await client.query(
+                    'UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2',
+                    [totalQty, item.product_id]
+                );
 
-                    // Fetch current updated stock for transaction logging
-                    const checkRes = await client.query('SELECT stock_quantity FROM product_batches WHERE id = $1', [item.batch_id]);
-                    const currentStock = checkRes.rows[0].stock_quantity;
+                // Fetch current updated stock for transaction logging
+                const checkRes = await client.query('SELECT stock_quantity FROM products WHERE id = $1', [item.product_id]);
+                const currentStock = checkRes.rows[0].stock_quantity || 0;
 
-                    // Log return stock transaction
-                    await client.query(
-                        `INSERT INTO stock_transactions 
-                         (product_id, batch_id, invoice_id, transaction_type, quantity, balance_stock)
-                         VALUES ($1, $2, $3, 'return', $4, $5)`,
-                        [item.product_id, item.batch_id, id, totalQty, currentStock]
-                    );
-
-                    // Sync main product inventory
-                    await client.query(
-                        `UPDATE products 
-                         SET stock_quantity = COALESCE((SELECT SUM(stock_quantity) FROM product_batches WHERE product_id = $1 AND deleted_at IS NULL), 0)
-                         WHERE id = $1`,
-                        [item.product_id]
-                    );
-                }
+                // Log return stock transaction
+                await client.query(
+                    `INSERT INTO stock_transactions 
+                     (product_id, batch_id, invoice_id, transaction_type, quantity, balance_stock)
+                     VALUES ($1, NULL, $2, 'return', $3, $4)`,
+                    [item.product_id, id, totalQty, currentStock]
+                );
             }
         }
 
