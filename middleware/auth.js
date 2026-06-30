@@ -3,7 +3,13 @@ require('dotenv').config();
 
 const auth = (req, res, next) => {
     try {
-        const token = req.header('Authorization')?.replace('Bearer ', '');
+        let token = req.header('Authorization')?.replace('Bearer ', '');
+        if (!token && req.query.token) {
+            token = req.query.token;
+        }
+        if (!token && req.query.Authorization) {
+            token = req.query.Authorization.replace('Bearer ', '');
+        }
         
         if (!token) {
             return res.status(401).json({ error: 'No token provided' });
@@ -25,7 +31,13 @@ const auth = (req, res, next) => {
 
 const adminAuth = (req, res, next) => {
     try {
-        const token = req.header('Authorization')?.replace('Bearer ', '');
+        let token = req.header('Authorization')?.replace('Bearer ', '');
+        if (!token && req.query.token) {
+            token = req.query.token;
+        }
+        if (!token && req.query.Authorization) {
+            token = req.query.Authorization.replace('Bearer ', '');
+        }
         
         if (!token) {
             return res.status(401).json({ error: 'No token provided' });
