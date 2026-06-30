@@ -826,6 +826,9 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
 
         const invoice = invoiceRes.rows[0];
         const items = itemsRes.rows;
+        
+        // Calculate amount in words for the PDF
+        invoice.amount_in_words = convertNumberToWords(invoice.grand_total);
 
         // Initialize PDF Document
         const doc = new PDFDocument({ size: 'A4', margin: 30 });
