@@ -898,26 +898,23 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
         // Column Headers & X Positions
         const cols = {
             sr: { x: 23, w: 18, label: 'SR' },
-            description: { x: 42, w: 110, label: 'DESCRIPTION' },
-            mfr: { x: 153, w: 32, label: 'MFR' },
-            pkg: { x: 186, w: 28, label: 'PKG' },
-            hsn: { x: 215, w: 34, label: 'HSN' },
-            batch: { x: 250, w: 42, label: 'BATCH' },
-            exp: { x: 293, w: 30, label: 'EXP' },
-            qty: { x: 324, w: 22, label: 'QTY' },
-            free: { x: 347, w: 22, label: 'FREE' },
-            mrp: { x: 370, w: 32, label: 'MRP' },
-            rate: { x: 403, w: 34, label: 'RATE' },
-            disc: { x: 438, w: 22, label: 'DIS%' },
-            val: { x: 461, w: 38, label: 'VALUE' },
-            gst: { x: 500, w: 22, label: 'GST%' },
-            net: { x: 523, w: 48, label: 'NET AMT' }
+            mfr: { x: 42, w: 32, label: 'MFR' },
+            pkg: { x: 75, w: 28, label: 'PKG' },
+            description: { x: 104, w: 200, label: 'DESCRIPTION' },
+            qty: { x: 305, w: 22, label: 'QTY' },
+            free: { x: 328, w: 22, label: 'FREE' },
+            mrp: { x: 351, w: 34, label: 'MRP' },
+            rate: { x: 386, w: 36, label: 'RATE' },
+            disc: { x: 423, w: 22, label: 'DIS%' },
+            val: { x: 446, w: 48, label: 'VALUE' },
+            gst: { x: 495, w: 22, label: 'GST%' },
+            net: { x: 518, w: 54, label: 'NET AMT' }
         };
 
         // Draw headers
         Object.keys(cols).forEach(k => {
             const col = cols[k];
-            doc.text(col.label, col.x, tableY, { width: col.w, align: k === 'description' || k === 'batch' ? 'left' : 'center' });
+            doc.text(col.label, col.x, tableY, { width: col.w, align: k === 'description' ? 'left' : 'center' });
         });
 
         // Header bottom line
@@ -932,22 +929,12 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
             doc.fontSize(6.2);
             doc.text(String(index + 1), cols.sr.x, currentY, { width: cols.sr.w, align: 'center' });
             
-            // Truncate description if long
-            const desc = item.product_name.length > 28 ? item.product_name.substring(0, 26) + '..' : item.product_name;
+            // Truncate description if long (extended width from 28 to 50 characters)
+            const desc = item.product_name.length > 50 ? item.product_name.substring(0, 48) + '..' : item.product_name;
             doc.text(desc, cols.description.x, currentY, { width: cols.description.w, align: 'left' });
             
             doc.text(item.product_mfr || 'ALK', cols.mfr.x, currentY, { width: cols.mfr.w, align: 'center' });
             doc.text(item.product_size || '10S', cols.pkg.x, currentY, { width: cols.pkg.w, align: 'center' });
-            doc.text(item.product_hsn || '', cols.hsn.x, currentY, { width: cols.hsn.w, align: 'center' });
-            doc.text(item.batch_number || '', cols.batch.x, currentY, { width: cols.batch.w, align: 'left' });
-            
-            // Format expiry
-            let expStr = '';
-            if (item.expiry_date) {
-                const d = new Date(item.expiry_date);
-                expStr = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getFullYear()).substring(2)}`;
-            }
-            doc.text(expStr, cols.exp.x, currentY, { width: cols.exp.w, align: 'center' });
             
             doc.text(String(item.quantity), cols.qty.x, currentY, { width: cols.qty.w, align: 'center' });
             doc.text(String(item.free_quantity || 0), cols.free.x, currentY, { width: cols.free.w, align: 'center' });
@@ -974,8 +961,8 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
         const tableBottomY = 480;
         doc.moveTo(20, tableBottomY).lineTo(575, tableBottomY).stroke('#666');
 
-        // Left table columns borders
-        const colLines = [38, 151, 184, 213, 248, 291, 321, 345, 368, 401, 436, 459, 498, 521];
+        // Left table columns borders (aligned to new column coordinates)
+        const colLines = [40, 74, 103, 304, 327, 350, 385, 422, 445, 494, 517];
         colLines.forEach(x => {
             doc.moveTo(x, tableY).lineTo(x, tableBottomY).stroke('#ccc');
         });
