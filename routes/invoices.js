@@ -289,9 +289,9 @@ router.get('/products-search', adminAuth, async (req, res) => {
                     p.size as package_size,
                     p.mfr as manufacturer,
                     p.stock_quantity as available_stock,
-                    COALESCE(g.percentage, 0.00) as gst_percentage
+                    COALESCE(g.percentage, (SELECT percentage FROM gst_rates WHERE is_active = true LIMIT 1), 18.00) as gst_percentage
                 FROM products p
-                LEFT JOIN product_gst_rates g ON p.id = g.product_id
+                LEFT JOIN product_gst_rates g ON p.id = g.product_id AND g.is_active = true
                 ORDER BY p.name ASC
                 LIMIT 30
             `;
@@ -308,9 +308,9 @@ router.get('/products-search', adminAuth, async (req, res) => {
                     p.size as package_size,
                     p.mfr as manufacturer,
                     p.stock_quantity as available_stock,
-                    COALESCE(g.percentage, 0.00) as gst_percentage
+                    COALESCE(g.percentage, (SELECT percentage FROM gst_rates WHERE is_active = true LIMIT 1), 18.00) as gst_percentage
                 FROM products p
-                LEFT JOIN product_gst_rates g ON p.id = g.product_id
+                LEFT JOIN product_gst_rates g ON p.id = g.product_id AND g.is_active = true
                 WHERE p.name ILIKE $1 OR p.sku ILIKE $1
                 ORDER BY p.name ASC
                 LIMIT 50
