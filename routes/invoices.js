@@ -914,7 +914,12 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
         // Draw headers
         Object.keys(cols).forEach(k => {
             const col = cols[k];
-            doc.text(col.label, col.x, tableY, { width: col.w, align: k === 'description' ? 'left' : 'center' });
+            let alignment = 'center';
+            if (k === 'description') alignment = 'left';
+            if (['mrp', 'rate', 'val', 'net'].includes(k)) alignment = 'right';
+            
+            const printW = ['mrp', 'rate', 'val', 'net'].includes(k) ? col.w - 3 : col.w;
+            doc.text(col.label, col.x, tableY, { width: printW, align: alignment });
         });
 
         // Header bottom line
@@ -939,20 +944,20 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
             doc.text(String(item.quantity), cols.qty.x, currentY, { width: cols.qty.w, align: 'center' });
             doc.text(String(item.free_quantity || 0), cols.free.x, currentY, { width: cols.free.w, align: 'center' });
             
-            // Prices / Numbers
-            doc.text(parseFloat(item.rate * 1.12).toFixed(2), cols.mrp.x, currentY, { width: cols.mrp.w, align: 'right' }); // simulated MRP
-            doc.text(parseFloat(item.rate).toFixed(2), cols.rate.x, currentY, { width: cols.rate.w, align: 'right' });
+            // Prices / Numbers (subtract 3 from width for right padding)
+            doc.text(parseFloat(item.rate * 1.12).toFixed(2), cols.mrp.x, currentY, { width: cols.mrp.w - 3, align: 'right' }); // simulated MRP
+            doc.text(parseFloat(item.rate).toFixed(2), cols.rate.x, currentY, { width: cols.rate.w - 3, align: 'right' });
             
             // Discount
             const dPct = parseFloat(item.discount_percentage || 0);
             doc.text(dPct > 0 ? `${dPct}%` : '0', cols.disc.x, currentY, { width: cols.disc.w, align: 'center' });
             
-            // Value (Rate * Qty)
+            // Value (Rate * Qty) (subtract 3 from width for right padding)
             const grossVal = parseFloat(item.rate) * parseInt(item.quantity);
-            doc.text(grossVal.toFixed(2), cols.val.x, currentY, { width: cols.val.w, align: 'right' });
+            doc.text(grossVal.toFixed(2), cols.val.x, currentY, { width: cols.val.w - 3, align: 'right' });
             
             doc.text(`${parseFloat(item.gst_percentage).toFixed(0)}%`, cols.gst.x, currentY, { width: cols.gst.w, align: 'center' });
-            doc.text(parseFloat(item.total_amount).toFixed(2), cols.net.x, currentY, { width: cols.net.w, align: 'right' });
+            doc.text(parseFloat(item.total_amount).toFixed(2), cols.net.x, currentY, { width: cols.net.w - 3, align: 'right' });
 
             currentY += itemRowHeight;
         });
@@ -961,10 +966,10 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
         const tableBottomY = 480;
         doc.moveTo(20, tableBottomY).lineTo(575, tableBottomY).stroke('#666');
 
-        // Left table columns borders (aligned to new column coordinates)
+        // Left table columns borders (aligned to new column coordinates, starting at Y=175 to meet the top header line)
         const colLines = [40, 74, 103, 304, 327, 350, 385, 422, 445, 494, 517];
         colLines.forEach(x => {
-            doc.moveTo(x, tableY).lineTo(x, tableBottomY).stroke('#ccc');
+            doc.moveTo(x, 175).lineTo(x, tableBottomY).stroke('#ccc');
         });
 
         // --- 4. BOTTOM SECTION: TAX SLABS & FINANCIAL TOTALS ---
