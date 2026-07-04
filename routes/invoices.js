@@ -830,6 +830,11 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
         // Calculate amount in words for the PDF
         invoice.amount_in_words = convertNumberToWords(invoice.grand_total);
 
+        const formatAddressLine = (str) => {
+            if (!str) return '';
+            return str.replace(/,(?!\s)/g, ', ');
+        };
+
         // Initialize PDF Document
         const doc = new PDFDocument({ size: 'A4', margin: 30 });
         
@@ -849,53 +854,65 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
         doc.moveTo(20, 42).lineTo(575, 42).stroke('#666');
 
         // --- 2. HEADER: COMPANY & CUSTOMER (SIDE BY SIDE) ---
-        // Vertical divider (terminates at metadata section divider Y=175)
-        doc.moveTo(297, 42).lineTo(297, 175).stroke('#666');
+        // Vertical divider (terminates at metadata section divider Y=190)
+        doc.moveTo(297, 42).lineTo(297, 190).stroke('#666');
 
         // Left Side: Company Address details
-        doc.fontSize(11).font('Helvetica-Bold').text(invoice.company_name.toUpperCase(), 30, 48);
-        doc.fontSize(7).font('Helvetica').text(`${invoice.company_address1 || ''}`, 30, 62);
-        if (invoice.company_address2) doc.text(invoice.company_address2, 30, 70);
-        doc.text(`${invoice.company_city || ''}, ${invoice.company_state || ''} - ${invoice.company_pincode || ''}`, 30, 78);
-        doc.text(`Phone: ${invoice.company_phone || ''}`, 30, 90);
-        doc.text(`Email: ${invoice.company_email || ''}`, 30, 98);
+        doc.fontSize(11).font('Helvetica-Bold').text(invoice.company_name.toUpperCase(), 30, 48, { width: 250 });
         
-        doc.font('Helvetica-Bold').text(`GSTIN: ${invoice.company_gst || ''}`, 30, 112);
-        doc.font('Helvetica').text(`Drug License: ${invoice.company_dl || ''}`, 30, 122);
+        doc.fontSize(7).font('Helvetica');
+        doc.text(formatAddressLine(invoice.company_address1), 30, doc.y + 2, { width: 250 });
+        if (invoice.company_address2) {
+            doc.text(formatAddressLine(invoice.company_address2), 30, doc.y + 2, { width: 250 });
+        }
+        doc.text(`${formatAddressLine(invoice.company_city)}, ${formatAddressLine(invoice.company_state)} - ${invoice.company_pincode || ''}`, 30, doc.y + 2, { width: 250 });
+        doc.text(`Phone: ${invoice.company_phone || ''}`, 30, doc.y + 2, { width: 250 });
+        doc.text(`Email: ${invoice.company_email || ''}`, 30, doc.y + 2, { width: 250 });
+        
+        doc.font('Helvetica-Bold').text(`GSTIN: ${invoice.company_gst || ''}`, 30, doc.y + 4, { width: 250 });
+        doc.font('Helvetica').text(`Drug License: ${invoice.company_dl || ''}`, 30, doc.y + 2, { width: 250 });
 
         // Right Side: Customer Details & Invoice metadata
-        doc.fontSize(10).font('Helvetica-Bold').text('BILLED TO / CUSTOMER:', 305, 48);
-        doc.fontSize(9).font('Helvetica-Bold').text(invoice.customer_name.toUpperCase(), 305, 60);
-        doc.fontSize(7).font('Helvetica').text(`${invoice.customer_address1 || ''}`, 305, 72);
-        if (invoice.customer_address2) doc.text(invoice.customer_address2, 305, 80);
-        doc.text(`${invoice.customer_city || ''}, ${invoice.customer_state || ''} - ${invoice.customer_pincode || ''}`, 305, 88);
-        doc.text(`Phone: ${invoice.customer_phone || ''} | Contact: ${invoice.customer_contact || ''}`, 305, 96);
-        doc.font('Helvetica-Bold').text(`GSTIN: ${invoice.customer_gst || ''}`, 305, 108);
-        doc.font('Helvetica').text(`Drug License: ${invoice.customer_dl || ''}`, 305, 116);
+        doc.fontSize(10).font('Helvetica-Bold').text('BILLED TO / CUSTOMER:', 305, 48, { width: 250 });
+        doc.fontSize(9).font('Helvetica-Bold').text(invoice.customer_name.toUpperCase(), 305, doc.y + 2, { width: 250 });
+        
+        doc.fontSize(7).font('Helvetica');
+        if (invoice.customer_owner) {
+            doc.text(`Owner: ${invoice.customer_owner}`, 305, doc.y + 2, { width: 250 });
+        }
+        doc.text(formatAddressLine(invoice.customer_address1), 305, doc.y + 2, { width: 250 });
+        if (invoice.customer_address2) {
+            doc.text(formatAddressLine(invoice.customer_address2), 305, doc.y + 2, { width: 250 });
+        }
+        doc.text(`${formatAddressLine(invoice.customer_city)}, ${formatAddressLine(invoice.customer_state)} - ${invoice.customer_pincode || ''}`, 305, doc.y + 2, { width: 250 });
+        doc.text(`Phone: ${invoice.customer_phone || ''} | Contact: ${invoice.customer_contact || ''}`, 305, doc.y + 2, { width: 250 });
+        
+        doc.font('Helvetica-Bold').text(`GSTIN: ${invoice.customer_gst || ''}`, 305, doc.y + 4, { width: 250 });
+        doc.font('Helvetica').text(`Drug License: ${invoice.customer_dl || ''}`, 305, doc.y + 2, { width: 250 });
 
         // Metadata grid at bottom of header section
-        doc.moveTo(20, 130).lineTo(575, 130).stroke('#666');
+        doc.moveTo(20, 145).lineTo(575, 145).stroke('#666');
         
         // Metadata fields
-        doc.fontSize(7.5).font('Helvetica-Bold').text(`Invoice No:`, 30, 135);
-        doc.font('Helvetica').text(`${invoice.invoice_number}`, 85, 135);
-        doc.font('Helvetica-Bold').text(`Inv Date:`, 30, 147);
-        doc.font('Helvetica').text(`${new Date(invoice.invoice_date).toLocaleDateString()}`, 85, 147);
-        doc.font('Helvetica-Bold').text(`Due Date:`, 30, 159);
-        doc.font('Helvetica').text(`${invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : 'Immediate'}`, 85, 159);
+        doc.fontSize(7.5).font('Helvetica-Bold').text(`Invoice No:`, 30, 150);
+        doc.font('Helvetica').text(`${invoice.invoice_number}`, 85, 150);
+        doc.font('Helvetica-Bold').text(`Inv Date:`, 30, 162);
+        doc.font('Helvetica').text(`${new Date(invoice.invoice_date).toLocaleDateString()}`, 85, 162);
+        doc.font('Helvetica-Bold').text(`Due Date:`, 30, 174);
+        doc.font('Helvetica').text(`${invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : 'Immediate'}`, 85, 174);
 
-        doc.font('Helvetica-Bold').text(`Transport:`, 305, 135);
-        doc.font('Helvetica').text(`${invoice.transport || 'Direct'}`, 365, 135);
-        doc.font('Helvetica-Bold').text(`P.O. No:`, 305, 147);
-        doc.font('Helvetica').text(`${invoice.po_number || 'N/A'}`, 365, 147);
-        doc.font('Helvetica-Bold').text(`Sales Rep:`, 305, 159);
-        doc.font('Helvetica').text(`${invoice.sales_person || 'Direct Sales'}`, 365, 159);
+        doc.font('Helvetica-Bold').text(`Transport:`, 305, 150);
+        doc.font('Helvetica').text(`${invoice.transport || 'Direct'}`, 365, 150);
+        doc.font('Helvetica-Bold').text(`P.O. No:`, 305, 162);
+        doc.font('Helvetica').text(`${invoice.po_number || 'N/A'}`, 365, 162);
+        doc.font('Helvetica-Bold').text(`Sales Rep:`, 305, 174);
+        doc.font('Helvetica').text(`${invoice.sales_person || 'Direct Sales'}`, 365, 174);
 
         // Divider before table
-        doc.moveTo(20, 175).lineTo(575, 175).stroke('#666');
+        doc.moveTo(20, 190).lineTo(575, 190).stroke('#666');
 
         // --- 3. ITEMS TABLE ---
-        const tableY = 180;
+        const tableY = 195;
         doc.fontSize(6.5).font('Helvetica-Bold');
         
         // Column Headers & X Positions
@@ -926,10 +943,10 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
         });
 
         // Header bottom line
-        doc.moveTo(20, 192).lineTo(575, 192).stroke('#666');
+        doc.moveTo(20, 207).lineTo(575, 207).stroke('#666');
 
         // Items loop
-        let currentY = 196;
+        let currentY = 211;
         const itemRowHeight = 12;
         doc.font('Helvetica');
 
@@ -949,8 +966,8 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
             
             // Prices / Numbers (subtract 3 from width for right padding)
             const unitTaxable = parseFloat(item.rate) / (1 + parseFloat(item.gst_percentage) / 100);
-            doc.text(unitTaxable.toFixed(2), cols.mrp.x, currentY, { width: cols.mrp.w - 3, align: 'right' }); // unit price excluding GST
-            doc.text(parseFloat(item.rate).toFixed(2), cols.rate.x, currentY, { width: cols.rate.w - 3, align: 'right' });
+            doc.text(parseFloat(item.rate).toFixed(2), cols.mrp.x, currentY, { width: cols.mrp.w - 3, align: 'right' }); // unit price including GST (MRP)
+            doc.text(unitTaxable.toFixed(2), cols.rate.x, currentY, { width: cols.rate.w - 3, align: 'right' }); // unit price excluding GST (RATE)
             
             // Discount
             const dPct = parseFloat(item.discount_percentage || 0);
@@ -967,17 +984,17 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
         });
 
         // Draw vertical columns borders in table section
-        const tableBottomY = 480;
+        const tableBottomY = 495;
         doc.moveTo(20, tableBottomY).lineTo(575, tableBottomY).stroke('#666');
 
-        // Left table columns borders (aligned to new column coordinates, starting at Y=175 to meet the top header line)
+        // Left table columns borders (aligned to new column coordinates, starting at Y=190 to meet the top header line)
         const colLines = [40, 74, 103, 304, 327, 350, 385, 422, 445, 494, 517];
         colLines.forEach(x => {
-            doc.moveTo(x, 175).lineTo(x, tableBottomY).stroke('#ccc');
+            doc.moveTo(x, 190).lineTo(x, tableBottomY).stroke('#ccc');
         });
 
         // --- 4. BOTTOM SECTION: TAX SLABS & FINANCIAL TOTALS ---
-        const footerY = 485;
+        const footerY = 500;
 
         // Group items by GST percentage to show GST Slab Summary
         const gstSlabs = {};
@@ -1057,47 +1074,47 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
         printRow('NET PAYABLE:', `Rs. ${parseFloat(invoice.grand_total).toFixed(2)}`, true);
 
         // Amount in Words
-        doc.moveTo(20, 590).lineTo(575, 590).stroke('#666');
-        doc.fontSize(7.5).font('Helvetica-Bold').text(`Amount in Words:`, 30, 596);
-        doc.font('Helvetica-Oblique').text(invoice.amount_in_words, 110, 596, { width: 440 });
+        doc.moveTo(20, 605).lineTo(575, 605).stroke('#666');
+        doc.fontSize(7.5).font('Helvetica-Bold').text(`Amount in Words:`, 30, 611);
+        doc.font('Helvetica-Oblique').text(invoice.amount_in_words, 110, 611, { width: 440 });
 
         // --- 5. BANK DETAILS & TERMS ---
-        doc.moveTo(20, 614).lineTo(575, 614).stroke('#666');
+        doc.moveTo(20, 629).lineTo(575, 629).stroke('#666');
         
-        doc.fontSize(7.5).font('Helvetica-Bold').text('Bank Billing Information:', 30, 620);
+        doc.fontSize(7.5).font('Helvetica-Bold').text('Bank Billing Information:', 30, 635);
         if (invoice.bank_name) {
-            doc.font('Helvetica').text(`Bank Name: ${invoice.bank_name}`, 30, 632);
-            doc.text(`Account Number: ${invoice.bank_account_no}`, 30, 642);
-            doc.text(`IFSC Code: ${invoice.bank_ifsc}`, 30, 652);
-            doc.text(`Branch: ${invoice.bank_branch}`, 30, 662);
+            doc.font('Helvetica').text(`Bank Name: ${invoice.bank_name}`, 30, 647);
+            doc.text(`Account Number: ${invoice.bank_account_no}`, 30, 657);
+            doc.text(`IFSC Code: ${invoice.bank_ifsc}`, 30, 667);
+            doc.text(`Branch: ${invoice.bank_branch}`, 30, 677);
         } else {
-            doc.font('Helvetica-Oblique').text('No bank details provided.', 30, 632);
+            doc.font('Helvetica-Oblique').text('No bank details provided.', 30, 647);
         }
 
         // Terms Divider
-        doc.moveTo(297, 614).lineTo(297, 720).stroke('#666');
+        doc.moveTo(297, 629).lineTo(297, 735).stroke('#666');
 
         // Terms and Conditions on Right
-        doc.font('Helvetica-Bold').text('TERMS & CONDITIONS:', 305, 620);
+        doc.font('Helvetica-Bold').text('TERMS & CONDITIONS:', 305, 635);
         doc.fontSize(6.5).font('Helvetica');
-        doc.text('1. Goods once sold cannot be taken back or exchanged.', 305, 632);
-        doc.text('2. Bills not paid within the due date will attract 24% interest.', 305, 642);
-        doc.text('3. Excess charges/oversight should be notified for refund within 3 days.', 305, 652);
-        doc.text('4. We certify that the items mentioned are registered under GST Act 2017.', 305, 662);
+        doc.text('1. Goods once sold cannot be taken back or exchanged.', 305, 647);
+        doc.text('2. Bills not paid within the due date will attract 24% interest.', 305, 657);
+        doc.text('3. Excess charges/oversight should be notified for refund within 3 days.', 305, 667);
+        doc.text('4. We certify that the items mentioned are registered under GST Act 2017.', 305, 677);
 
         // --- 6. DECLARATION & SIGNATURE BLOCKS ---
-        doc.moveTo(20, 720).lineTo(575, 720).stroke('#666');
+        doc.moveTo(20, 735).lineTo(575, 735).stroke('#666');
         
         // Divider for signatures
-        doc.moveTo(297, 720).lineTo(297, 822).stroke('#666');
+        doc.moveTo(297, 735).lineTo(297, 822).stroke('#666');
 
         // Left box: Customer Sign
-        doc.fontSize(7.5).font('Helvetica-Bold').text("CUSTOMER'S SIGNATURE", 30, 726);
-        doc.font('Helvetica-Oblique').text('(Sign & Stamp of Customer / Receiver)', 30, 785);
+        doc.fontSize(7.5).font('Helvetica-Bold').text("CUSTOMER'S SIGNATURE", 30, 741);
+        doc.font('Helvetica-Oblique').text('(Sign & Stamp of Customer / Receiver)', 30, 795);
 
         // Right box: Authorized Signatory
-        doc.font('Helvetica-Bold').text(`For ${invoice.company_name.toUpperCase()}`, 305, 726);
-        doc.font('Helvetica-Bold').text('Authorized Signatory', 305, 785, { align: 'right', width: 250 });
+        doc.font('Helvetica-Bold').text(`For ${invoice.company_name.toUpperCase()}`, 305, 741);
+        doc.font('Helvetica-Bold').text('Authorized Signatory', 305, 795, { align: 'right', width: 250 });
 
         doc.end();
     } catch (err) {
