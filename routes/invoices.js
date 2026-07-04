@@ -885,7 +885,7 @@ router.get('/:id/pdf', adminAuth, async (req, res) => {
             doc.text(formatAddressLine(invoice.customer_address2), 305, doc.y + 2, { width: 250 });
         }
         doc.text(`${formatAddressLine(invoice.customer_city)}, ${formatAddressLine(invoice.customer_state)} - ${invoice.customer_pincode || ''}`, 305, doc.y + 2, { width: 250 });
-        doc.text(`Phone: ${invoice.customer_phone || ''} | Contact: ${invoice.customer_contact || ''}`, 305, doc.y + 2, { width: 250 });
+        doc.text(`Phone: ${invoice.customer_phone || ''} | Email: ${invoice.customer_email || ''}`, 305, doc.y + 2, { width: 250 });
         
         doc.font('Helvetica-Bold').text(`GSTIN: ${invoice.customer_gst || ''}`, 305, doc.y + 4, { width: 250 });
         doc.font('Helvetica').text(`Drug License: ${invoice.customer_dl || ''}`, 305, doc.y + 2, { width: 250 });
