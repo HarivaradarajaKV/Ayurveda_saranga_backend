@@ -85,12 +85,13 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
           'units', COALESCE(oi.quantity, 1),
           'selling_price', COALESCE(oi.price_at_time, 0),
           'discount', 0,
-          'tax', COALESCE(oi.gst_amount, 0),
+          'tax', COALESCE(oi.gst_percentage, p_gst.percentage, o.gst_percentage, 18.00),
           'hsn', 441122
         )) as items
       FROM orders o
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN products p ON oi.product_id = p.id
+      LEFT JOIN product_gst_rates p_gst ON p.id = p_gst.product_id AND p_gst.is_active = true
       WHERE o.id = $1 AND (o.is_temporary = false OR o.is_temporary IS NULL)
       GROUP BY o.id
     `, [orderId]);
@@ -123,13 +124,26 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
         const sanitizedItems = [];
         for (const item of rawItems) {
             if (!item || (!item.name && !item.product_id)) continue;
+
+            let taxRate = parseFloat(item.tax) || 0;
+            const sellingPrice = parseFloat(item.selling_price) || 0;
+
+            // Safeguard: If tax was mistakenly passed as GST Rupee amount (e.g. > 50), recalculate percentage or default to 18
+            if (taxRate > 50) {
+                if (sellingPrice > 0 && sellingPrice > taxRate) {
+                    taxRate = Math.round((taxRate / (sellingPrice - taxRate)) * 100);
+                } else {
+                    taxRate = 18;
+                }
+            }
+
             sanitizedItems.push({
                 name: (item.name || 'Ayurveda Product').trim().slice(0, 50),
                 sku: `prod-${item.product_id || Math.floor(Math.random() * 1000)}`,
                 units: parseInt(item.units) || 1,
-                selling_price: parseFloat(item.selling_price) || 0,
+                selling_price: sellingPrice,
                 discount: parseFloat(item.discount) || 0,
-                tax: parseFloat(item.tax) || 0,
+                tax: taxRate,
                 hsn: parseInt(item.hsn) || 441122
             });
         }
@@ -141,7 +155,7 @@ router.post('/create-shipment/:orderId', auth, adminAuth, async (req, res) => {
                 units: 1,
                 selling_price: parseFloat(order.total_amount) || 10,
                 discount: 0,
-                tax: 0,
+                tax: parseFloat(order.gst_percentage) || 18,
                 hsn: 441122
             });
         }

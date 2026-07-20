@@ -15,7 +15,7 @@ async function testShiprocketWithRealOrder() {
           'units', oi.quantity,
           'selling_price', oi.price_at_time,
           'discount', 0,
-          'tax', oi.gst_amount,
+          'tax', COALESCE(oi.gst_percentage, o.gst_percentage, 18),
           'hsn', 441122
         )) as items,
         u.email
