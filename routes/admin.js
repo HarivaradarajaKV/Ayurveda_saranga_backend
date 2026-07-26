@@ -17,7 +17,9 @@ router.get('/stats', adminAuth, async (req, res) => {
                 COALESCE((SELECT SUM(total_amount) FROM orders WHERE is_temporary = false OR is_temporary IS NULL), 0) as total_revenue,
                 COALESCE((SELECT SUM(quantity) FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.is_temporary = false OR o.is_temporary IS NULL), 0) as products_sold,
                 (SELECT COUNT(*) FROM contact_submissions) as total_contacts,
-                (SELECT COUNT(*) FROM career_submissions) as total_careers
+                (SELECT COUNT(*) FROM career_submissions) as total_careers,
+                (SELECT COUNT(*) FROM coupons WHERE is_active = true OR is_active IS NULL) as active_coupons,
+                COALESCE((SELECT AVG(total_amount) FROM orders WHERE is_temporary = false OR is_temporary IS NULL), 0) as avg_order_value
         `);
 
         // Fetch most ordered products from order_items table with their FIRST image
@@ -177,20 +179,24 @@ router.get('/stats', adminAuth, async (req, res) => {
     }
 });
 
-// Download Sales CSV Report for Daily / Weekly / Monthly / Yearly
+// Download Sales CSV Report for selected startDate to endDate range
 router.get('/reports/sales', adminAuth, async (req, res) => {
     try {
-        const period = (req.query.period || 'daily').toLowerCase();
+        const { startDate, endDate, period } = req.query;
         let dateCondition = '';
+        let queryParams = [];
 
-        if (period === 'monthly') {
-            dateCondition = "AND o.created_at >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months')";
+        if (startDate && endDate) {
+            dateCondition = "WHERE o.created_at::date >= $1::date AND o.created_at::date <= $2::date AND (o.is_temporary = false OR o.is_temporary IS NULL)";
+            queryParams = [startDate, endDate];
+        } else if (period === 'monthly') {
+            dateCondition = "WHERE o.created_at >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months') AND (o.is_temporary = false OR o.is_temporary IS NULL)";
         } else if (period === 'yearly') {
-            dateCondition = "AND o.created_at >= (DATE_TRUNC('year', CURRENT_DATE) - INTERVAL '4 years')";
+            dateCondition = "WHERE o.created_at >= (DATE_TRUNC('year', CURRENT_DATE) - INTERVAL '4 years') AND (o.is_temporary = false OR o.is_temporary IS NULL)";
         } else if (period === 'weekly') {
-            dateCondition = "AND o.created_at >= (DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '6 weeks')";
+            dateCondition = "WHERE o.created_at >= (DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '6 weeks') AND (o.is_temporary = false OR o.is_temporary IS NULL)";
         } else {
-            dateCondition = "AND o.created_at >= (CURRENT_DATE - INTERVAL '6 days')";
+            dateCondition = "WHERE o.created_at >= (CURRENT_DATE - INTERVAL '6 days') AND (o.is_temporary = false OR o.is_temporary IS NULL)";
         }
 
         const reportQuery = `
@@ -206,49 +212,24 @@ router.get('/reports/sales', adminAuth, async (req, res) => {
             FROM orders o
             LEFT JOIN users u ON o.user_id = u.id
             LEFT JOIN order_items oi ON o.id = oi.order_id
-            WHERE (o.is_temporary = false OR o.is_temporary IS NULL)
             ${dateCondition}
             GROUP BY o.id, u.name, u.email, o.shipping_address, o.created_at, o.total_amount, o.status, o.payment_method
             ORDER BY o.created_at DESC
         `;
 
-        const reportResult = await pool.query(reportQuery);
+        const reportResult = await pool.query(reportQuery, queryParams);
         let rows = reportResult.rows;
-
-        // Fallback: If no orders in current dateCondition range, return all historical orders so report is never empty
-        if (rows.length === 0) {
-            const fallbackQuery = `
-                SELECT 
-                    o.id as order_id,
-                    COALESCE(u.name, o.shipping_address->>'name', 'Guest') as customer_name,
-                    COALESCE(u.email, o.shipping_address->>'email', '—') as customer_email,
-                    TO_CHAR(o.created_at, 'YYYY-MM-DD HH24:MI') as order_date,
-                    o.total_amount,
-                    o.status,
-                    COALESCE(o.payment_method, 'Prepaid') as payment_method,
-                    COUNT(oi.id) as items_count
-                FROM orders o
-                LEFT JOIN users u ON o.user_id = u.id
-                LEFT JOIN order_items oi ON o.id = oi.order_id
-                WHERE (o.is_temporary = false OR o.is_temporary IS NULL)
-                GROUP BY o.id, u.name, u.email, o.shipping_address, o.created_at, o.total_amount, o.status, o.payment_method
-                ORDER BY o.created_at DESC
-                LIMIT 100
-            `;
-            const fallbackResult = await pool.query(fallbackQuery);
-            rows = fallbackResult.rows;
-        }
 
         // Build CSV Content
         let csvContent = 'Order ID,Customer Name,Customer Email,Order Date,Total Amount (INR),Status,Payment Method,Items Count\n';
         rows.forEach(r => {
             const name = `"${(r.customer_name || '').replace(/"/g, '""')}"`;
             const email = `"${(r.customer_email || '').replace(/"/g, '""')}"`;
-            csvContent += `#SA${r.order_id},${name},${email},${r.order_date},${parseFloat(r.total_amount || 0).toFixed(2)},${r.status || 'Delivered'},${r.payment_method},${r.items_count || 1}\n`;
+            csvContent += `#SA${r.order_id},${name},${email},${r.order_date},${parseFloat(r.total_amount || 0).toFixed(2)},${(r.status || 'Delivered').toUpperCase()},${r.payment_method},${r.items_count || 1}\n`;
         });
 
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment; filename="Saranga_Sales_Report_${period.toUpperCase()}_${new Date().toISOString().slice(0, 10)}.csv"`);
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="Saranga_Sales_Report_${startDate || 'Range'}_to_${endDate || 'Today'}.csv"`);
         return res.status(200).send(csvContent);
     } catch (error) {
         console.error('Error generating sales report:', error);
