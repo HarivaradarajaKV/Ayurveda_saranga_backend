@@ -37,35 +37,7 @@ const pool = new Pool(
 
 // Handle pool errors
 pool.on('error', (err, client) => {
-    console.error('Unexpected error on idle client', err);
-    if (err.code === 'ENETUNREACH') {
-        console.error('Network unreachable. Please check your internet connection and firewall settings.');
-    } else if (err.code === 'ECONNREFUSED') {
-        console.error('Connection refused. Please check if the database server is running and accessible.');
-    } else if (err.code === '28P01') {
-        console.error('Invalid database credentials. Please check your DB_USER and DB_PASSWORD environment variables.');
-    }
-    console.error('Attempting to recover from pool error');
-});
-
-// Handle pool connection
-pool.on('connect', () => {
-    console.log('Database connected successfully');
-});
-
-// Handle pool removal
-pool.on('remove', () => {
-    console.log('Database connection pool removed');
-    setTimeout(() => {
-        pool.connect((err, client, release) => {
-            if (err) {
-                console.error('Error reconnecting to the database:', err);
-            } else {
-                console.log('Successfully reconnected to database');
-                release();
-            }
-        });
-    }, 1000);
+    console.error('Unexpected error on idle client', err?.message || err);
 });
 
 module.exports = pool; 
