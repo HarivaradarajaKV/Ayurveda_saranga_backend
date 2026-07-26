@@ -1222,7 +1222,7 @@ router.get('/banners', adminAuth, async (req, res) => {
     }
 });
 
-// POST create banner (with image upload via multipart)
+// POST create banner (with instant image upload response)
 router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
     try {
         await ensureBannersTable();
@@ -1231,13 +1231,7 @@ router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
         let image_url = req.body.image_url || null;
 
         if (req.file) {
-            try {
-                const uploaded = await uploadCategoryImage(req.file.path, title || 'banner');
-                image_url = typeof uploaded === 'string' ? uploaded : (uploaded?.url || uploaded?.path);
-            } catch (upErr) {
-                console.warn('Supabase upload failed for banner, using local file fallback:', upErr.message);
-                image_url = `/uploads/profile-photos/${req.file.filename}`;
-            }
+            image_url = `/uploads/profile-photos/${req.file.filename}`;
         }
 
         if (!image_url) {
@@ -1260,14 +1254,27 @@ router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
             ]
         );
 
-        res.json(result.rows[0]);
+        const newBanner = result.rows[0];
+        res.json(newBanner);
+
+        // Async background upload to Supabase storage without delaying response
+        if (req.file) {
+            uploadCategoryImage(req.file.path, title || 'banner')
+                .then(uploaded => {
+                    const finalUrl = typeof uploaded === 'string' ? uploaded : (uploaded?.url || uploaded?.path);
+                    if (finalUrl) {
+                        pool.query('UPDATE banners SET image_url = $1 WHERE id = $2', [finalUrl, newBanner.id]).catch(() => {});
+                    }
+                })
+                .catch(err => console.warn('Background Supabase banner sync skipped:', err.message));
+        }
     } catch (error) {
         console.error('Error creating banner:', error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// PUT update banner
+// PUT update banner (with instant response)
 router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) => {
     try {
         const { id } = req.params;
@@ -1282,13 +1289,7 @@ router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) =
         let image_url = bodyImageUrl || existing.rows[0].image_url;
 
         if (req.file) {
-            try {
-                const uploaded = await uploadCategoryImage(req.file.path, title || 'banner');
-                image_url = typeof uploaded === 'string' ? uploaded : (uploaded?.url || uploaded?.path);
-            } catch (upErr) {
-                console.warn('Supabase upload failed for banner update, using local file fallback:', upErr.message);
-                image_url = `/uploads/profile-photos/${req.file.filename}`;
-            }
+            image_url = `/uploads/profile-photos/${req.file.filename}`;
         }
 
         const result = await pool.query(
@@ -1310,7 +1311,20 @@ router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) =
             ]
         );
 
-        res.json(result.rows[0]);
+        const updatedBanner = result.rows[0];
+        res.json(updatedBanner);
+
+        // Async background upload to Supabase storage without delaying response
+        if (req.file) {
+            uploadCategoryImage(req.file.path, title || 'banner')
+                .then(uploaded => {
+                    const finalUrl = typeof uploaded === 'string' ? uploaded : (uploaded?.url || uploaded?.path);
+                    if (finalUrl) {
+                        pool.query('UPDATE banners SET image_url = $1 WHERE id = $2', [finalUrl, updatedBanner.id]).catch(() => {});
+                    }
+                })
+                .catch(err => console.warn('Background Supabase banner update sync skipped:', err.message));
+        }
     } catch (error) {
         console.error('Error updating banner:', error);
         res.status(500).json({ error: error.message });
