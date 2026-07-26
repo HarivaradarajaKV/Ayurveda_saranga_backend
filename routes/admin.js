@@ -1226,15 +1226,21 @@ router.get('/banners', adminAuth, async (req, res) => {
 router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
     try {
         await ensureBannersTable();
+        console.log('--- POST /banners ---');
+        console.log('req.body:', req.body);
+        console.log('req.file:', req.file);
+
         const { title, link_type, link_value, platform, section, sort_order, is_active } = req.body;
 
         let image_url = req.body.image_url || null;
 
         if (req.file) {
             image_url = `/uploads/profile-photos/${req.file.filename}`;
+            console.log('Setting image_url to local path:', image_url);
         }
 
         if (!image_url) {
+            console.log('Error: Banner image is required');
             return res.status(400).json({ error: 'Banner image is required' });
         }
 
