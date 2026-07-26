@@ -167,6 +167,7 @@ app.use('/api/users', require('./routes/users'));
 app.use('/api/shiprocket', shiprocketRouter);
 app.use('/api/donations', donationsRouter);
 app.use('/api/submissions', require('./routes/submissions'));
+app.use('/api/banners', require('./routes/banners'));
 app.use('/orders', ordersRouter);
 
 // Test database endpoint

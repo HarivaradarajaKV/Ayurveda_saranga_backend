@@ -1183,4 +1183,155 @@ router.post('/best-sellers', adminAuth, async (req, res) => {
     }
 });
 
-module.exports = router; 
+// ───────────────────────────────────────────────────────────────────────────
+// BANNER MANAGEMENT
+// ───────────────────────────────────────────────────────────────────────────
+
+// GET all banners (admin)
+router.get('/banners', adminAuth, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM banners ORDER BY sort_order ASC, id ASC'
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching banners:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// POST create banner (with image upload via multipart)
+router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
+    try {
+        const { title, link_type, link_value, platform, section, sort_order, is_active } = req.body;
+
+        let image_url = req.body.image_url || null;
+
+        if (req.file) {
+            const uploaded = await uploadCategoryImage(req.file);
+            image_url = uploaded;
+        }
+
+        if (!image_url) {
+            return res.status(400).json({ error: 'Banner image is required' });
+        }
+
+        const result = await pool.query(
+            `INSERT INTO banners (title, image_url, link_type, link_value, platform, section, sort_order, is_active)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             RETURNING *`,
+            [
+                title || null,
+                image_url,
+                link_type || 'product',
+                link_value || null,
+                platform || 'web',
+                section || 'top',
+                sort_order != null ? parseInt(sort_order) : 0,
+                is_active !== undefined ? (is_active === 'false' || is_active === false ? false : true) : true
+            ]
+        );
+
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Error creating banner:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// PUT update banner
+router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { title, link_type, link_value, platform, section, sort_order, is_active, image_url: bodyImageUrl } = req.body;
+
+        // Fetch existing banner
+        const existing = await pool.query('SELECT * FROM banners WHERE id = $1', [id]);
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ error: 'Banner not found' });
+        }
+
+        let image_url = bodyImageUrl || existing.rows[0].image_url;
+
+        if (req.file) {
+            const uploaded = await uploadCategoryImage(req.file);
+            image_url = uploaded;
+        }
+
+        const result = await pool.query(
+            `UPDATE banners
+             SET title = $1, image_url = $2, link_type = $3, link_value = $4,
+                 platform = $5, section = $6, sort_order = $7, is_active = $8
+             WHERE id = $9
+             RETURNING *`,
+            [
+                title !== undefined ? title : existing.rows[0].title,
+                image_url,
+                link_type || existing.rows[0].link_type,
+                link_value !== undefined ? link_value : existing.rows[0].link_value,
+                platform || existing.rows[0].platform,
+                section || existing.rows[0].section,
+                sort_order != null ? parseInt(sort_order) : existing.rows[0].sort_order,
+                is_active !== undefined ? (is_active === 'false' || is_active === false ? false : true) : existing.rows[0].is_active,
+                id
+            ]
+        );
+
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Error updating banner:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// DELETE banner
+router.delete('/banners/:id', adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const existing = await pool.query('SELECT image_url FROM banners WHERE id = $1', [id]);
+        if (existing.rows.length === 0) {
+            return res.status(404).json({ error: 'Banner not found' });
+        }
+
+        // Attempt to delete from storage (non-fatal if fails)
+        try {
+            const url = existing.rows[0].image_url;
+            if (url && !url.includes('/images/banner/')) {
+                await deleteImage(url);
+            }
+        } catch (storageErr) {
+            console.warn('Could not delete banner image from storage:', storageErr.message);
+        }
+
+        await pool.query('DELETE FROM banners WHERE id = $1', [id]);
+        res.json({ message: 'Banner deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting banner:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// PATCH update banner sort order (bulk reorder)
+router.patch('/banners/reorder', adminAuth, async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const { items } = req.body; // [{ id, sort_order }, ...]
+        if (!Array.isArray(items)) return res.status(400).json({ error: 'items must be an array' });
+
+        await client.query('BEGIN');
+        for (const item of items) {
+            await client.query('UPDATE banners SET sort_order = $1 WHERE id = $2', [item.sort_order, item.id]);
+        }
+        await client.query('COMMIT');
+        res.json({ message: 'Banners reordered successfully' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error reordering banners:', error);
+        res.status(500).json({ error: error.message });
+    } finally {
+        client.release();
+    }
+});
+
+module.exports = router;
