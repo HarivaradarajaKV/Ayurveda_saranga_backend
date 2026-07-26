@@ -361,20 +361,25 @@ router.get('/orders', adminAuth, async (req, res) => {
                     ELSE 'Online Payment'
                 END as payment_method_display,
                 o.shipping_postal_code AS shipping_pincode,
-                u.name as user_name,
-                u.email as user_email,
-                json_agg(json_build_object(
-                    'product_id', p.id,
-                    'product_name', p.name,
-                    'quantity', oi.quantity,
-                    'price_at_time', oi.price_at_time
-                )) as items
+                COALESCE(u.name, o.shipping_full_name, 'Customer') as user_name,
+                COALESCE(u.email, '—') as user_email,
+                COALESCE(
+                    (
+                        SELECT json_agg(json_build_object(
+                            'product_id', oi.product_id,
+                            'product_name', p.name,
+                            'quantity', oi.quantity,
+                            'price_at_time', oi.price_at_time
+                        ))
+                        FROM order_items oi
+                        LEFT JOIN products p ON oi.product_id = p.id
+                        WHERE oi.order_id = o.id
+                    ),
+                    '[]'::json
+                ) as items
             FROM orders o
-            JOIN users u ON o.user_id = u.id
-            JOIN order_items oi ON o.id = oi.order_id
-            JOIN products p ON oi.product_id = p.id
+            LEFT JOIN users u ON o.user_id = u.id
             WHERE (o.is_temporary = false OR o.is_temporary IS NULL)
-            GROUP BY o.id, u.name, u.email
             ORDER BY o.created_at DESC
         `);
 
