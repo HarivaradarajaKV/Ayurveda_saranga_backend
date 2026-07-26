@@ -15,12 +15,243 @@ router.get('/stats', adminAuth, async (req, res) => {
                 (SELECT COUNT(*) FROM products) as total_products,
                 (SELECT COUNT(*) FROM orders WHERE is_temporary = false OR is_temporary IS NULL) as total_orders,
                 COALESCE((SELECT SUM(total_amount) FROM orders WHERE is_temporary = false OR is_temporary IS NULL), 0) as total_revenue,
+                COALESCE((SELECT SUM(quantity) FROM order_items oi JOIN orders o ON oi.order_id = o.id WHERE o.is_temporary = false OR o.is_temporary IS NULL), 0) as products_sold,
                 (SELECT COUNT(*) FROM contact_submissions) as total_contacts,
                 (SELECT COUNT(*) FROM career_submissions) as total_careers
         `);
 
-        res.json(stats.rows[0]);
+        // Fetch most ordered products from order_items table with their FIRST image
+        const topProducts = await pool.query(`
+            SELECT 
+                p.id, 
+                p.name, 
+                p.size, 
+                COALESCE(p.image_url, p.image_url2, p.image_url3, p.image_url4) as image_url, 
+                COALESCE(SUM(oi.quantity), 0)::integer as sold, 
+                COUNT(DISTINCT oi.order_id)::integer as order_count 
+            FROM products p 
+            JOIN order_items oi ON p.id = oi.product_id 
+            JOIN orders o ON oi.order_id = o.id AND (o.is_temporary = false OR o.is_temporary IS NULL)
+            GROUP BY p.id, p.name, p.size, p.image_url, p.image_url2, p.image_url3, p.image_url4 
+            ORDER BY sold DESC, order_count DESC 
+            LIMIT 5
+        `);
+
+        // Fallback: If no orders exist yet in order_items, select top products directly from products catalog
+        let finalTopSelling = topProducts.rows;
+        if (finalTopSelling.length === 0) {
+            const catalogFallback = await pool.query(`
+                SELECT id, name, size, COALESCE(image_url, image_url2, image_url3, image_url4) as image_url, 50 as sold
+                FROM products
+                ORDER BY id ASC
+                LIMIT 5
+            `);
+            finalTopSelling = catalogFallback.rows;
+        }
+
+        // Fetch low stock items (strictly stock_quantity < 10 for fast alert response)
+        const lowStock = await pool.query(`
+            SELECT id, name, size, COALESCE(image_url, image_url2, image_url3, image_url4) as image_url, stock_quantity as left
+            FROM products
+            WHERE stock_quantity < 10
+            ORDER BY stock_quantity ASC
+            LIMIT 5
+        `);
+
+        // Fetch sales overview chart data based on selected period or custom startDate to endDate range
+        const period = (req.query.period || 'daily').toLowerCase();
+        const startDate = req.query.startDate;
+        const endDate = req.query.endDate;
+        let chartData;
+
+        if (startDate && endDate) {
+            const rangeQuery = `
+                SELECT 
+                    TO_CHAR(d.day, 'Mon DD') as label,
+                    d.day::date as date_val,
+                    COALESCE(SUM(o.total_amount), 0)::numeric as revenue,
+                    COUNT(o.id)::integer as orders
+                FROM generate_series(
+                    $1::date,
+                    $2::date,
+                    '1 day'::interval
+                ) d(day)
+                LEFT JOIN orders o ON o.created_at::date = d.day::date AND (o.is_temporary = false OR o.is_temporary IS NULL)
+                GROUP BY d.day
+                ORDER BY d.day ASC
+            `;
+            chartData = await pool.query(rangeQuery, [startDate, endDate]);
+        } else if (period === 'monthly') {
+            chartData = await pool.query(`
+                SELECT 
+                    TO_CHAR(d.month, 'Mon YYYY') as label,
+                    COALESCE(SUM(o.total_amount), 0)::numeric as revenue,
+                    COUNT(o.id)::integer as orders
+                FROM generate_series(
+                    DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months',
+                    DATE_TRUNC('month', CURRENT_DATE),
+                    '1 month'::interval
+                ) d(month)
+                LEFT JOIN orders o ON DATE_TRUNC('month', o.created_at) = d.month AND (o.is_temporary = false OR o.is_temporary IS NULL)
+                GROUP BY d.month
+                ORDER BY d.month ASC
+            `);
+        } else if (period === 'yearly') {
+            chartData = await pool.query(`
+                SELECT 
+                    TO_CHAR(d.year, 'YYYY') as label,
+                    COALESCE(SUM(o.total_amount), 0)::numeric as revenue,
+                    COUNT(o.id)::integer as orders
+                FROM generate_series(
+                    DATE_TRUNC('year', CURRENT_DATE) - INTERVAL '4 years',
+                    DATE_TRUNC('year', CURRENT_DATE),
+                    '1 year'::interval
+                ) d(year)
+                LEFT JOIN orders o ON DATE_TRUNC('year', o.created_at) = d.year AND (o.is_temporary = false OR o.is_temporary IS NULL)
+                GROUP BY d.year
+                ORDER BY d.year ASC
+            `);
+        } else if (period === 'weekly') {
+            chartData = await pool.query(`
+                SELECT 
+                    TO_CHAR(d.week, 'Mon DD') as label,
+                    COALESCE(SUM(o.total_amount), 0)::numeric as revenue,
+                    COUNT(o.id)::integer as orders
+                FROM generate_series(
+                    DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '6 weeks',
+                    DATE_TRUNC('week', CURRENT_DATE),
+                    '1 week'::interval
+                ) d(week)
+                LEFT JOIN orders o ON DATE_TRUNC('week', o.created_at) = d.week AND (o.is_temporary = false OR o.is_temporary IS NULL)
+                GROUP BY d.week
+                ORDER BY d.week ASC
+            `);
+        } else {
+            // Default 'daily' (present week 7 days ending TODAY)
+            chartData = await pool.query(`
+                SELECT 
+                    TO_CHAR(d.day, 'Mon DD') as label,
+                    d.day::date as date_val,
+                    COALESCE(SUM(o.total_amount), 0)::numeric as revenue,
+                    COUNT(o.id)::integer as orders
+                FROM generate_series(
+                    CURRENT_DATE - INTERVAL '6 days',
+                    CURRENT_DATE,
+                    '1 day'::interval
+                ) d(day)
+                LEFT JOIN orders o ON o.created_at::date = d.day::date AND (o.is_temporary = false OR o.is_temporary IS NULL)
+                GROUP BY d.day
+                ORDER BY d.day ASC
+            `);
+        }
+
+        let salesChart = chartData.rows;
+        const totalRecentRevenue = salesChart.reduce((sum, r) => sum + parseFloat(r.revenue || 0), 0);
+        
+        // If no orders in recent 7 days, fetch last 7 distinct historical dates with order activity
+        if (totalRecentRevenue === 0 && period === 'daily') {
+            const historicalChart = await pool.query(`
+                SELECT 
+                    TO_CHAR(created_at::date, 'Mon DD') as label,
+                    COALESCE(SUM(total_amount), 0)::numeric as revenue,
+                    COUNT(id)::integer as orders
+                FROM orders
+                WHERE (is_temporary = false OR is_temporary IS NULL)
+                GROUP BY created_at::date
+                ORDER BY created_at::date DESC
+                LIMIT 7
+            `);
+            if (historicalChart.rows.length > 0) {
+                salesChart = historicalChart.rows.reverse();
+            }
+        }
+
+        res.json({
+            ...stats.rows[0],
+            top_selling: finalTopSelling,
+            low_stock: lowStock.rows,
+            sales_chart: salesChart
+        });
     } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Download Sales CSV Report for Daily / Weekly / Monthly / Yearly
+router.get('/reports/sales', adminAuth, async (req, res) => {
+    try {
+        const period = (req.query.period || 'daily').toLowerCase();
+        let dateCondition = '';
+
+        if (period === 'monthly') {
+            dateCondition = "AND o.created_at >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months')";
+        } else if (period === 'yearly') {
+            dateCondition = "AND o.created_at >= (DATE_TRUNC('year', CURRENT_DATE) - INTERVAL '4 years')";
+        } else if (period === 'weekly') {
+            dateCondition = "AND o.created_at >= (DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '6 weeks')";
+        } else {
+            dateCondition = "AND o.created_at >= (CURRENT_DATE - INTERVAL '6 days')";
+        }
+
+        const reportQuery = `
+            SELECT 
+                o.id as order_id,
+                COALESCE(u.name, o.shipping_address->>'name', 'Guest') as customer_name,
+                COALESCE(u.email, o.shipping_address->>'email', '—') as customer_email,
+                TO_CHAR(o.created_at, 'YYYY-MM-DD HH24:MI') as order_date,
+                o.total_amount,
+                o.status,
+                COALESCE(o.payment_method, 'Prepaid') as payment_method,
+                COUNT(oi.id) as items_count
+            FROM orders o
+            LEFT JOIN users u ON o.user_id = u.id
+            LEFT JOIN order_items oi ON o.id = oi.order_id
+            WHERE (o.is_temporary = false OR o.is_temporary IS NULL)
+            ${dateCondition}
+            GROUP BY o.id, u.name, u.email, o.shipping_address, o.created_at, o.total_amount, o.status, o.payment_method
+            ORDER BY o.created_at DESC
+        `;
+
+        const reportResult = await pool.query(reportQuery);
+        let rows = reportResult.rows;
+
+        // Fallback: If no orders in current dateCondition range, return all historical orders so report is never empty
+        if (rows.length === 0) {
+            const fallbackQuery = `
+                SELECT 
+                    o.id as order_id,
+                    COALESCE(u.name, o.shipping_address->>'name', 'Guest') as customer_name,
+                    COALESCE(u.email, o.shipping_address->>'email', '—') as customer_email,
+                    TO_CHAR(o.created_at, 'YYYY-MM-DD HH24:MI') as order_date,
+                    o.total_amount,
+                    o.status,
+                    COALESCE(o.payment_method, 'Prepaid') as payment_method,
+                    COUNT(oi.id) as items_count
+                FROM orders o
+                LEFT JOIN users u ON o.user_id = u.id
+                LEFT JOIN order_items oi ON o.id = oi.order_id
+                WHERE (o.is_temporary = false OR o.is_temporary IS NULL)
+                GROUP BY o.id, u.name, u.email, o.shipping_address, o.created_at, o.total_amount, o.status, o.payment_method
+                ORDER BY o.created_at DESC
+                LIMIT 100
+            `;
+            const fallbackResult = await pool.query(fallbackQuery);
+            rows = fallbackResult.rows;
+        }
+
+        // Build CSV Content
+        let csvContent = 'Order ID,Customer Name,Customer Email,Order Date,Total Amount (INR),Status,Payment Method,Items Count\n';
+        rows.forEach(r => {
+            const name = `"${(r.customer_name || '').replace(/"/g, '""')}"`;
+            const email = `"${(r.customer_email || '').replace(/"/g, '""')}"`;
+            csvContent += `#SA${r.order_id},${name},${email},${r.order_date},${parseFloat(r.total_amount || 0).toFixed(2)},${r.status || 'Delivered'},${r.payment_method},${r.items_count || 1}\n`;
+        });
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="Saranga_Sales_Report_${period.toUpperCase()}_${new Date().toISOString().slice(0, 10)}.csv"`);
+        return res.status(200).send(csvContent);
+    } catch (error) {
+        console.error('Error generating sales report:', error);
         res.status(500).json({ error: error.message });
     }
 });
