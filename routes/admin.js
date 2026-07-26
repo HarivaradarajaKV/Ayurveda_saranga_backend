@@ -1187,9 +1187,31 @@ router.post('/best-sellers', adminAuth, async (req, res) => {
 // BANNER MANAGEMENT
 // ───────────────────────────────────────────────────────────────────────────
 
+async function ensureBannersTable() {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS banners (
+                id          SERIAL PRIMARY KEY,
+                title       TEXT,
+                image_url   TEXT NOT NULL,
+                link_type   TEXT NOT NULL DEFAULT 'product',
+                link_value  TEXT,
+                platform    TEXT NOT NULL DEFAULT 'web',
+                section     TEXT NOT NULL DEFAULT 'top',
+                sort_order  INTEGER DEFAULT 0,
+                is_active   BOOLEAN DEFAULT TRUE,
+                created_at  TIMESTAMPTZ DEFAULT NOW()
+            );
+        `);
+    } catch (err) {
+        console.error('Error ensuring banners table:', err.message);
+    }
+}
+
 // GET all banners (admin)
 router.get('/banners', adminAuth, async (req, res) => {
     try {
+        await ensureBannersTable();
         const result = await pool.query(
             'SELECT * FROM banners ORDER BY sort_order ASC, id ASC'
         );
@@ -1203,6 +1225,7 @@ router.get('/banners', adminAuth, async (req, res) => {
 // POST create banner (with image upload via multipart)
 router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
     try {
+        await ensureBannersTable();
         const { title, link_type, link_value, platform, section, sort_order, is_active } = req.body;
 
         let image_url = req.body.image_url || null;
