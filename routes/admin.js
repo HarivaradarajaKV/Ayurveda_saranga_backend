@@ -1222,25 +1222,25 @@ router.get('/banners', adminAuth, async (req, res) => {
     }
 });
 
-// POST create banner (with instant image upload response)
+// POST create banner (with synchronous image upload)
 router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
     try {
         await ensureBannersTable();
-        console.log('--- POST /banners ---');
-        console.log('req.body:', req.body);
-        console.log('req.file:', req.file);
-
         const { title, link_type, link_value, platform, section, sort_order, is_active } = req.body;
 
         let image_url = req.body.image_url || null;
 
         if (req.file) {
-            image_url = `/uploads/profile-photos/${req.file.filename}`;
-            console.log('Setting image_url to local path:', image_url);
+            try {
+                const uploaded = await uploadCategoryImage(req.file.path, title || 'banner');
+                image_url = typeof uploaded === 'string' ? uploaded : (uploaded?.url || uploaded?.path);
+            } catch (upErr) {
+                console.error('Supabase upload failed for banner:', upErr);
+                return res.status(500).json({ error: `Image upload failed: ${upErr.message}` });
+            }
         }
 
         if (!image_url) {
-            console.log('Error: Banner image is required');
             return res.status(400).json({ error: 'Banner image is required' });
         }
 
@@ -1260,27 +1260,14 @@ router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
             ]
         );
 
-        const newBanner = result.rows[0];
-        res.json(newBanner);
-
-        // Async background upload to Supabase storage without delaying response
-        if (req.file) {
-            uploadCategoryImage(req.file.path, title || 'banner')
-                .then(uploaded => {
-                    const finalUrl = typeof uploaded === 'string' ? uploaded : (uploaded?.url || uploaded?.path);
-                    if (finalUrl) {
-                        pool.query('UPDATE banners SET image_url = $1 WHERE id = $2', [finalUrl, newBanner.id]).catch(() => {});
-                    }
-                })
-                .catch(err => console.warn('Background Supabase banner sync skipped:', err.message));
-        }
+        res.json(result.rows[0]);
     } catch (error) {
         console.error('Error creating banner:', error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// PUT update banner (with instant response)
+// PUT update banner
 router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) => {
     try {
         const { id } = req.params;
@@ -1295,7 +1282,13 @@ router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) =
         let image_url = bodyImageUrl || existing.rows[0].image_url;
 
         if (req.file) {
-            image_url = `/uploads/profile-photos/${req.file.filename}`;
+            try {
+                const uploaded = await uploadCategoryImage(req.file.path, title || 'banner');
+                image_url = typeof uploaded === 'string' ? uploaded : (uploaded?.url || uploaded?.path);
+            } catch (upErr) {
+                console.error('Supabase upload failed for banner update:', upErr);
+                return res.status(500).json({ error: `Image upload failed: ${upErr.message}` });
+            }
         }
 
         const result = await pool.query(
@@ -1317,20 +1310,7 @@ router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) =
             ]
         );
 
-        const updatedBanner = result.rows[0];
-        res.json(updatedBanner);
-
-        // Async background upload to Supabase storage without delaying response
-        if (req.file) {
-            uploadCategoryImage(req.file.path, title || 'banner')
-                .then(uploaded => {
-                    const finalUrl = typeof uploaded === 'string' ? uploaded : (uploaded?.url || uploaded?.path);
-                    if (finalUrl) {
-                        pool.query('UPDATE banners SET image_url = $1 WHERE id = $2', [finalUrl, updatedBanner.id]).catch(() => {});
-                    }
-                })
-                .catch(err => console.warn('Background Supabase banner update sync skipped:', err.message));
-        }
+        res.json(result.rows[0]);
     } catch (error) {
         console.error('Error updating banner:', error);
         res.status(500).json({ error: error.message });
