@@ -1231,8 +1231,13 @@ router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
         let image_url = req.body.image_url || null;
 
         if (req.file) {
-            const uploaded = await uploadCategoryImage(req.file);
-            image_url = uploaded;
+            try {
+                const uploaded = await uploadCategoryImage(req.file.path, title || 'banner');
+                image_url = typeof uploaded === 'string' ? uploaded : (uploaded?.url || uploaded?.path);
+            } catch (upErr) {
+                console.warn('Supabase upload failed for banner, using local file fallback:', upErr.message);
+                image_url = `/uploads/profile-photos/${req.file.filename}`;
+            }
         }
 
         if (!image_url) {
@@ -1277,8 +1282,13 @@ router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) =
         let image_url = bodyImageUrl || existing.rows[0].image_url;
 
         if (req.file) {
-            const uploaded = await uploadCategoryImage(req.file);
-            image_url = uploaded;
+            try {
+                const uploaded = await uploadCategoryImage(req.file.path, title || 'banner');
+                image_url = typeof uploaded === 'string' ? uploaded : (uploaded?.url || uploaded?.path);
+            } catch (upErr) {
+                console.warn('Supabase upload failed for banner update, using local file fallback:', upErr.message);
+                image_url = `/uploads/profile-photos/${req.file.filename}`;
+            }
         }
 
         const result = await pool.query(
