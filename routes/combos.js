@@ -214,23 +214,11 @@ router.post('/', adminAuth, upload.single('image'), async (req, res) => {
         let image_url = req.body.image_url || null;
         if (req.file) {
             try {
-                const uploadResult = await uploadCategoryImage(req.file.path, title || 'new_combo');
+                const uploadResult = await uploadCategoryImage(req.file.path, title || 'combo');
                 image_url = uploadResult.url;
             } catch (uploadError) {
                 console.warn('Supabase upload failed for combo image, using local upload:', uploadError.message);
                 image_url = `/uploads/${req.file.filename}`;
-            }
-        }
-
-        if (!image_url && Array.isArray(items) && items.length > 0) {
-            try {
-                const firstPid = items[0].product_id;
-                const pRes = await pool.query('SELECT image_url FROM products WHERE id = $1', [firstPid]);
-                if (pRes.rows.length > 0 && pRes.rows[0].image_url) {
-                    image_url = pRes.rows[0].image_url;
-                }
-            } catch (e) {
-                console.error('Error auto-setting combo image from product:', e);
             }
         }
 
@@ -309,23 +297,11 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
         let image_url = req.body.image_url;
         if (req.file) {
             try {
-                const uploadResult = await uploadCategoryImage(req.file.path, title || 'updated_combo');
+                const uploadResult = await uploadCategoryImage(req.file.path, title || 'combo');
                 image_url = uploadResult.url;
             } catch (uploadError) {
                 console.warn('Supabase upload failed for combo image, using local upload:', uploadError.message);
                 image_url = `/uploads/${req.file.filename}`;
-            }
-        }
-
-        if (!image_url && Array.isArray(items) && items.length > 0) {
-            try {
-                const firstPid = items[0].product_id;
-                const pRes = await pool.query('SELECT image_url FROM products WHERE id = $1', [firstPid]);
-                if (pRes.rows.length > 0 && pRes.rows[0].image_url) {
-                    image_url = pRes.rows[0].image_url;
-                }
-            } catch (e) {
-                console.error('Error auto-setting combo image from product:', e);
             }
         }
 
@@ -335,7 +311,7 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
             SET 
                 title = COALESCE($1, title),
                 description = COALESCE($2, description),
-                image_url = COALESCE($3, image_url),
+                image_url = COALESCE(NULLIF($3, ''), image_url),
                 discount_type = COALESCE($4, discount_type),
                 discount_value = COALESCE($5, discount_value),
                 is_active = COALESCE($6, is_active),
