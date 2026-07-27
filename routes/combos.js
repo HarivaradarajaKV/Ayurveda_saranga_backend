@@ -190,10 +190,10 @@ router.post('/', adminAuth, upload.single('image'), async (req, res) => {
     try {
         const title = req.body.title || req.body.name;
         const description = req.body.description || null;
-        const price = req.body.price || req.body.combo_price ? Number(req.body.price || req.body.combo_price) : null;
+        const price = (req.body.price || req.body.combo_price) ? Number(req.body.price || req.body.combo_price) : null;
         const original_price = req.body.original_price ? Number(req.body.original_price) : null;
         
-        const discount_type = req.body.discount_type || 'fixed';
+        const discount_type = req.body.discount_type || 'percentage';
         const discount_value = req.body.discount_value !== undefined 
             ? Number(req.body.discount_value) 
             : (original_price && price ? original_price - price : 0);
@@ -221,7 +221,11 @@ router.post('/', adminAuth, upload.single('image'), async (req, res) => {
                 return res.status(500).json({ error: 'Failed to upload image' });
             }
         }
-        
+
+        if (!title) {
+            return res.status(400).json({ error: 'Combo title is required' });
+        }
+
         await client.query('BEGIN');
         const comboResult = await client.query(`
             INSERT INTO combo_offers (title, description, image_url, discount_type, discount_value, is_active, start_date, end_date, price, original_price)
@@ -256,7 +260,7 @@ router.post('/', adminAuth, upload.single('image'), async (req, res) => {
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error creating combo:', error);
-        res.status(500).json({ error: 'Failed to create combo offer' });
+        res.status(500).json({ error: 'Failed to create combo offer', details: error.message });
     } finally {
         client.release();
     }
@@ -269,10 +273,10 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
         const { id } = req.params;
         const title = req.body.title || req.body.name;
         const description = req.body.description;
-        const price = req.body.price || req.body.combo_price ? Number(req.body.price || req.body.combo_price) : null;
+        const price = (req.body.price || req.body.combo_price) ? Number(req.body.price || req.body.combo_price) : null;
         const original_price = req.body.original_price ? Number(req.body.original_price) : null;
         
-        const discount_type = req.body.discount_type || 'fixed';
+        const discount_type = req.body.discount_type || 'percentage';
         const discount_value = req.body.discount_value !== undefined 
             ? Number(req.body.discount_value) 
             : (original_price && price ? original_price - price : 0);
@@ -320,7 +324,10 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
             RETURNING *
         `, [title, description, image_url, discount_type, discount_value, is_active, start_date, end_date, price, original_price, id]);
 
-        if (updateResult.rows.length === 0) return res.status(404).json({ error: 'Combo not found' });
+        if (updateResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Combo not found' });
+        }
 
         if (Array.isArray(items)) {
             await client.query('DELETE FROM combo_offer_items WHERE combo_id = $1', [id]);
@@ -340,7 +347,7 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Error updating combo:', error);
-        res.status(500).json({ error: 'Failed to update combo offer' });
+        res.status(500).json({ error: 'Failed to update combo offer', details: error.message });
     } finally {
         client.release();
     }
@@ -350,11 +357,12 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
 router.delete('/:id', adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
+        await pool.query('DELETE FROM combo_offer_items WHERE combo_id = $1', [id]);
         await pool.query('DELETE FROM combo_offers WHERE id = $1', [id]);
         res.json({ success: true });
     } catch (error) {
         console.error('Error deleting combo:', error);
-        res.status(500).json({ error: 'Failed to delete combo offer' });
+        res.status(500).json({ error: 'Failed to delete combo offer', details: error.message });
     }
 });
 
