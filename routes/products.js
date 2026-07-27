@@ -465,8 +465,8 @@ router.get('/:id', async (req, res) => {
                 LEFT JOIN categories c ON p.category_id = c.id
                 LEFT JOIN categories pc ON c.parent_id = pc.id
                 LEFT JOIN reviews r ON p.id = r.product_id
-                WHERE TRIM(BOTH '-' FROM LOWER(REGEXP_REPLACE(p.name, '[^a-zA-Z0-9]+', '-', 'g'))) = $1
-                   OR LOWER(p.name) = LOWER(REPLACE($1, '-', ' '))
+                WHERE LOWER(REPLACE(p.name, ' ', '-')) = LOWER($1)
+                   OR TRIM(BOTH '-' FROM LOWER(REGEXP_REPLACE(p.name, '[^a-zA-Z0-9]+', '-', 'g'))) = $1
                 GROUP BY p.id, c.name, pc.name
             `, [id]);
         }

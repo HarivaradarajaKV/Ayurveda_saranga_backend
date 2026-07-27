@@ -1,8 +1,6 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { adminAuth } = require('../middleware/auth');
-const upload = require('../middleware/upload');
-const { uploadCategoryImage, deleteImage } = require('../services/supabaseStorage');
 
 // Ensure popups table exists automatically
 async function ensurePopupsTable() {
@@ -57,33 +55,38 @@ router.get('/all', adminAuth, async (req, res) => {
 });
 
 // Admin: POST /api/popups
-router.post('/', adminAuth, upload.single('image'), async (req, res) => {
+// Accepts JSON body: { title, description, button_text, link_type, link_value, is_active, image_url }
+// image_url is a full Supabase public URL sent from the admin after client-side upload
+router.post('/', adminAuth, async (req, res) => {
     try {
         await ensurePopupsTable();
-        const { title, description, button_text, link_type, link_value, is_active, image_url: bodyImageUrl } = req.body;
-        const isActiveBool = is_active === 'true' || is_active === true;
-        
-        let image_url = bodyImageUrl || null; // Accept URL sent directly from web admin
+        const { title, description, button_text, link_type, link_value, is_active, image_url } = req.body;
 
-        if (req.file) {
-            // Multipart upload (mobile/other clients)
-            try {
-                const uploadResult = await uploadCategoryImage(req.file.path, title || 'popup');
-                image_url = uploadResult.url;
-            } catch (uploadError) {
-                console.error('Error uploading popup image:', uploadError);
-            }
+        console.log('[Popup POST] body:', JSON.stringify({ title, image_url, is_active }));
+
+        if (!title) {
+            return res.status(400).json({ error: 'Title is required' });
         }
 
+        const isActiveBool = is_active === 'true' || is_active === true;
+
         if (isActiveBool) {
-            // Deactivate other popups
+            // Deactivate all other popups
             await pool.query('UPDATE popups SET is_active = false');
         }
 
         const result = await pool.query(
             `INSERT INTO popups (title, description, image_url, button_text, link_type, link_value, is_active)
              VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-            [title, description, image_url, button_text || 'Claim Yours Now', link_type || 'custom', link_value || null, isActiveBool]
+            [
+                title,
+                description || null,
+                image_url || null,
+                button_text || 'Claim Yours Now',
+                link_type || 'custom',
+                link_value || null,
+                isActiveBool
+            ]
         );
         res.json(result.rows[0]);
     } catch (error) {
@@ -93,44 +96,47 @@ router.post('/', adminAuth, upload.single('image'), async (req, res) => {
 });
 
 // Admin: PUT /api/popups/:id
-router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
+// Accepts JSON body — image_url is a full Supabase public URL
+router.put('/:id', adminAuth, async (req, res) => {
     try {
         await ensurePopupsTable();
         const { id } = req.params;
-        const { title, description, button_text, link_type, link_value, is_active, image_url: bodyImageUrl } = req.body;
-        const isActiveBool = is_active === 'true' || is_active === true;
+        const { title, description, button_text, link_type, link_value, is_active, image_url } = req.body;
 
-        // Fetch existing
+        console.log('[Popup PUT] id:', id, 'body:', JSON.stringify({ title, image_url, is_active }));
+
+        // Fetch existing row
         const existing = await pool.query('SELECT * FROM popups WHERE id = $1', [id]);
         if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'Popup not found' });
         }
 
-        let image_url = existing.rows[0].image_url;
+        const isActiveBool = is_active === 'true' || is_active === true;
 
-        // Accept URL directly from web admin JSON body
-        if (bodyImageUrl && bodyImageUrl !== image_url) {
-            image_url = bodyImageUrl;
-        }
-
-        if (req.file) {
-            // Multipart upload — replace old image
-            if (image_url && !image_url.startsWith('https://')) {
-                await deleteImage(image_url).catch(e => console.warn('Old image delete warning:', e));
-            }
-            const uploadResult = await uploadCategoryImage(req.file.path, title || 'popup');
-            image_url = uploadResult.url;
-        }
+        // Use incoming image_url if provided, else keep existing
+        const finalImageUrl = (image_url !== undefined && image_url !== null && image_url !== '')
+            ? image_url
+            : existing.rows[0].image_url;
 
         if (isActiveBool) {
             await pool.query('UPDATE popups SET is_active = false WHERE id != $1', [id]);
         }
 
         const result = await pool.query(
-            `UPDATE popups 
-             SET title = $1, description = $2, image_url = $3, button_text = $4, link_type = $5, link_value = $6, is_active = $7, updated_at = CURRENT_TIMESTAMP
+            `UPDATE popups
+             SET title = $1, description = $2, image_url = $3, button_text = $4,
+                 link_type = $5, link_value = $6, is_active = $7, updated_at = CURRENT_TIMESTAMP
              WHERE id = $8 RETURNING *`,
-            [title, description, image_url, button_text || 'Claim Yours Now', link_type || 'custom', link_value || null, isActiveBool, id]
+            [
+                title,
+                description || null,
+                finalImageUrl,
+                button_text || 'Claim Yours Now',
+                link_type || 'custom',
+                link_value || null,
+                isActiveBool,
+                id
+            ]
         );
         res.json(result.rows[0]);
     } catch (error) {
@@ -147,10 +153,6 @@ router.delete('/:id', adminAuth, async (req, res) => {
         const existing = await pool.query('SELECT * FROM popups WHERE id = $1', [id]);
         if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'Popup not found' });
-        }
-        const imageUrl = existing.rows[0].image_url;
-        if (imageUrl) {
-            await deleteImage(imageUrl).catch(e => console.warn('Image delete warning:', e));
         }
         await pool.query('DELETE FROM popups WHERE id = $1', [id]);
         res.json({ message: 'Popup deleted successfully' });
@@ -169,13 +171,13 @@ router.put('/:id/toggle', adminAuth, async (req, res) => {
         if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'Popup not found' });
         }
-        
+
         const nextActive = !existing.rows[0].is_active;
         if (nextActive) {
-            // Deactivate all others
+            // Deactivate all others first
             await pool.query('UPDATE popups SET is_active = false');
         }
-        
+
         const result = await pool.query(
             'UPDATE popups SET is_active = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
             [nextActive, id]
