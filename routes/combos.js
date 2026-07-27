@@ -217,8 +217,20 @@ router.post('/', adminAuth, upload.single('image'), async (req, res) => {
                 const uploadResult = await uploadCategoryImage(req.file.path, title || 'new_combo');
                 image_url = uploadResult.url;
             } catch (uploadError) {
-                console.error('Error uploading combo image:', uploadError);
-                return res.status(500).json({ error: 'Failed to upload image' });
+                console.warn('Supabase upload failed for combo image, using local upload:', uploadError.message);
+                image_url = `/uploads/${req.file.filename}`;
+            }
+        }
+
+        if (!image_url && Array.isArray(items) && items.length > 0) {
+            try {
+                const firstPid = items[0].product_id;
+                const pRes = await pool.query('SELECT image_url FROM products WHERE id = $1', [firstPid]);
+                if (pRes.rows.length > 0 && pRes.rows[0].image_url) {
+                    image_url = pRes.rows[0].image_url;
+                }
+            } catch (e) {
+                console.error('Error auto-setting combo image from product:', e);
             }
         }
 
@@ -300,8 +312,20 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
                 const uploadResult = await uploadCategoryImage(req.file.path, title || 'updated_combo');
                 image_url = uploadResult.url;
             } catch (uploadError) {
-                console.error('Error uploading combo image:', uploadError);
-                return res.status(500).json({ error: 'Failed to upload image' });
+                console.warn('Supabase upload failed for combo image, using local upload:', uploadError.message);
+                image_url = `/uploads/${req.file.filename}`;
+            }
+        }
+
+        if (!image_url && Array.isArray(items) && items.length > 0) {
+            try {
+                const firstPid = items[0].product_id;
+                const pRes = await pool.query('SELECT image_url FROM products WHERE id = $1', [firstPid]);
+                if (pRes.rows.length > 0 && pRes.rows[0].image_url) {
+                    image_url = pRes.rows[0].image_url;
+                }
+            } catch (e) {
+                console.error('Error auto-setting combo image from product:', e);
             }
         }
 
