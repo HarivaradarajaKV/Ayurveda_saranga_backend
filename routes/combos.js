@@ -1,6 +1,8 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { adminAuth } = require('../middleware/auth');
+const upload = require('../middleware/upload');
+const { uploadCategoryImage } = require('../services/supabaseStorage');
 
 // Admin: list all combos (active and inactive)
 router.get('/all', adminAuth, async (req, res) => {
@@ -21,6 +23,8 @@ router.get('/all', adminAuth, async (req, res) => {
                 c.end_date,
                 c.created_at,
                 c.updated_at,
+                c.price,
+                c.original_price,
                 COALESCE(json_agg(
                     DISTINCT jsonb_build_object(
                         'product_id', p.id,
@@ -36,7 +40,29 @@ router.get('/all', adminAuth, async (req, res) => {
             GROUP BY c.id
             ORDER BY c.created_at DESC
         `);
-        res.json(result.rows);
+
+        const combos = result.rows.map(c => {
+            const subtotal = c.items.reduce((sum, it) => sum + Number(it.price) * Number(it.quantity), 0);
+            const discount = c.discount_type === 'percentage' 
+                ? subtotal * (Number(c.discount_value) / 100)
+                : Number(c.discount_value);
+            const total = Math.max(subtotal - discount, 0);
+
+            const originalPrice = c.original_price !== null && c.original_price !== undefined ? Number(c.original_price) : subtotal;
+            const comboPrice = c.price !== null && c.price !== undefined ? Number(c.price) : total;
+
+            return { 
+                ...c, 
+                subtotal: originalPrice, 
+                discount, 
+                total: comboPrice,
+                original_price: originalPrice,
+                combo_price: comboPrice,
+                price: comboPrice
+            };
+        });
+
+        res.json(combos);
     } catch (error) {
         console.error('Error fetching all combos:', error);
         res.status(500).json({ error: 'Failed to fetch combos' });
@@ -62,6 +88,8 @@ router.get('/', async (req, res) => {
                 c.end_date,
                 c.created_at,
                 c.updated_at,
+                c.price,
+                c.original_price,
                 COALESCE(json_agg(
                     DISTINCT jsonb_build_object(
                         'product_id', p.id,
@@ -85,7 +113,19 @@ router.get('/', async (req, res) => {
                 ? subtotal * (Number(c.discount_value) / 100)
                 : Number(c.discount_value);
             const total = Math.max(subtotal - discount, 0);
-            return { ...c, subtotal, discount, total };
+
+            const originalPrice = c.original_price !== null && c.original_price !== undefined ? Number(c.original_price) : subtotal;
+            const comboPrice = c.price !== null && c.price !== undefined ? Number(c.price) : total;
+
+            return { 
+                ...c, 
+                subtotal: originalPrice, 
+                discount, 
+                total: comboPrice,
+                original_price: originalPrice,
+                combo_price: comboPrice,
+                price: comboPrice
+            };
         });
 
         res.json(combos);
@@ -125,7 +165,19 @@ router.get('/:id', async (req, res) => {
             ? subtotal * (Number(c.discount_value) / 100)
             : Number(c.discount_value);
         const total = Math.max(subtotal - discount, 0);
-        res.json({ ...c, subtotal, discount, total });
+
+        const originalPrice = c.original_price !== null && c.original_price !== undefined ? Number(c.original_price) : subtotal;
+        const comboPrice = c.price !== null && c.price !== undefined ? Number(c.price) : total;
+
+        res.json({ 
+            ...c, 
+            subtotal: originalPrice, 
+            discount, 
+            total: comboPrice,
+            original_price: originalPrice,
+            combo_price: comboPrice,
+            price: comboPrice
+        });
     } catch (error) {
         console.error('Error fetching combo details:', error);
         res.status(500).json({ error: 'Failed to fetch combo details' });
@@ -133,35 +185,59 @@ router.get('/:id', async (req, res) => {
 });
 
 // Admin: create combo with items
-router.post('/', adminAuth, async (req, res) => {
+router.post('/', adminAuth, upload.single('image'), async (req, res) => {
     const client = await pool.connect();
     try {
-        const { title, description, image_url, image_url2, image_url3, image_url4, discount_type, discount_value, is_active, start_date, end_date, items } = req.body;
+        const title = req.body.title || req.body.name;
+        const description = req.body.description || null;
+        const price = req.body.price || req.body.combo_price ? Number(req.body.price || req.body.combo_price) : null;
+        const original_price = req.body.original_price ? Number(req.body.original_price) : null;
         
-        console.log('[Combo Create] Received images:', {
-            image_url: image_url || 'null',
-            image_url2: image_url2 || 'null',
-            image_url3: image_url3 || 'null',
-            image_url4: image_url4 || 'null'
-        });
+        const discount_type = req.body.discount_type || 'fixed';
+        const discount_value = req.body.discount_value !== undefined 
+            ? Number(req.body.discount_value) 
+            : (original_price && price ? original_price - price : 0);
+
+        const is_active = req.body.is_active !== 'false' && req.body.is_active !== false;
+        const start_date = req.body.start_date || null;
+        const end_date = req.body.end_date || null;
+
+        let items = req.body.items;
+        if (typeof items === 'string') {
+            try {
+                items = JSON.parse(items);
+            } catch (e) {
+                items = [];
+            }
+        }
+
+        let image_url = req.body.image_url || null;
+        if (req.file) {
+            try {
+                const uploadResult = await uploadCategoryImage(req.file.path, title || 'new_combo');
+                image_url = uploadResult.url;
+            } catch (uploadError) {
+                console.error('Error uploading combo image:', uploadError);
+                return res.status(500).json({ error: 'Failed to upload image' });
+            }
+        }
         
         await client.query('BEGIN');
         const comboResult = await client.query(`
-            INSERT INTO combo_offers (title, description, image_url, image_url2, image_url3, image_url4, discount_type, discount_value, is_active, start_date, end_date)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            INSERT INTO combo_offers (title, description, image_url, discount_type, discount_value, is_active, start_date, end_date, price, original_price)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
             RETURNING *
         `, [
             title, 
-            description || null, 
-            image_url || null, 
-            image_url2 || null,
-            image_url3 || null,
-            image_url4 || null,
-            discount_type || 'percentage', 
-            discount_value || 0, 
-            is_active !== false, 
-            start_date || null, 
-            end_date || null
+            description, 
+            image_url, 
+            discount_type, 
+            discount_value, 
+            is_active, 
+            start_date, 
+            end_date,
+            price,
+            original_price
         ]);
         const combo = comboResult.rows[0];
 
@@ -187,11 +263,44 @@ router.post('/', adminAuth, async (req, res) => {
 });
 
 // Admin: update combo and items
-router.put('/:id', adminAuth, async (req, res) => {
+router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
     const client = await pool.connect();
     try {
         const { id } = req.params;
-        const { title, description, image_url, image_url2, image_url3, image_url4, discount_type, discount_value, is_active, start_date, end_date, items } = req.body;
+        const title = req.body.title || req.body.name;
+        const description = req.body.description;
+        const price = req.body.price || req.body.combo_price ? Number(req.body.price || req.body.combo_price) : null;
+        const original_price = req.body.original_price ? Number(req.body.original_price) : null;
+        
+        const discount_type = req.body.discount_type || 'fixed';
+        const discount_value = req.body.discount_value !== undefined 
+            ? Number(req.body.discount_value) 
+            : (original_price && price ? original_price - price : 0);
+
+        const is_active = req.body.is_active !== 'false' && req.body.is_active !== false;
+        const start_date = req.body.start_date || null;
+        const end_date = req.body.end_date || null;
+
+        let items = req.body.items;
+        if (typeof items === 'string') {
+            try {
+                items = JSON.parse(items);
+            } catch (e) {
+                items = [];
+            }
+        }
+
+        let image_url = req.body.image_url;
+        if (req.file) {
+            try {
+                const uploadResult = await uploadCategoryImage(req.file.path, title || 'updated_combo');
+                image_url = uploadResult.url;
+            } catch (uploadError) {
+                console.error('Error uploading combo image:', uploadError);
+                return res.status(500).json({ error: 'Failed to upload image' });
+            }
+        }
+
         await client.query('BEGIN');
         const updateResult = await client.query(`
             UPDATE combo_offers
@@ -199,18 +308,17 @@ router.put('/:id', adminAuth, async (req, res) => {
                 title = COALESCE($1, title),
                 description = COALESCE($2, description),
                 image_url = COALESCE($3, image_url),
-                image_url2 = COALESCE($4, image_url2),
-                image_url3 = COALESCE($5, image_url3),
-                image_url4 = COALESCE($6, image_url4),
-                discount_type = COALESCE($7, discount_type),
-                discount_value = COALESCE($8, discount_value),
-                is_active = COALESCE($9, is_active),
-                start_date = $10,
-                end_date = $11,
+                discount_type = COALESCE($4, discount_type),
+                discount_value = COALESCE($5, discount_value),
+                is_active = COALESCE($6, is_active),
+                start_date = $7,
+                end_date = $8,
+                price = COALESCE($9, price),
+                original_price = COALESCE($10, original_price),
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $12
+            WHERE id = $11
             RETURNING *
-        `, [title, description, image_url, image_url2, image_url3, image_url4, discount_type, discount_value, is_active, start_date || null, end_date || null, id]);
+        `, [title, description, image_url, discount_type, discount_value, is_active, start_date, end_date, price, original_price, id]);
 
         if (updateResult.rows.length === 0) return res.status(404).json({ error: 'Combo not found' });
 
