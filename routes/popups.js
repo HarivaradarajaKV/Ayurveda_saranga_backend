@@ -60,11 +60,13 @@ router.get('/all', adminAuth, async (req, res) => {
 router.post('/', adminAuth, upload.single('image'), async (req, res) => {
     try {
         await ensurePopupsTable();
-        const { title, description, button_text, link_type, link_value, is_active } = req.body;
+        const { title, description, button_text, link_type, link_value, is_active, image_url: bodyImageUrl } = req.body;
         const isActiveBool = is_active === 'true' || is_active === true;
         
-        let image_url = null;
+        let image_url = bodyImageUrl || null; // Accept URL sent directly from web admin
+
         if (req.file) {
+            // Multipart upload (mobile/other clients)
             try {
                 const uploadResult = await uploadCategoryImage(req.file.path, title || 'popup');
                 image_url = uploadResult.url;
@@ -95,7 +97,7 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
     try {
         await ensurePopupsTable();
         const { id } = req.params;
-        const { title, description, button_text, link_type, link_value, is_active } = req.body;
+        const { title, description, button_text, link_type, link_value, is_active, image_url: bodyImageUrl } = req.body;
         const isActiveBool = is_active === 'true' || is_active === true;
 
         // Fetch existing
@@ -105,9 +107,15 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
         }
 
         let image_url = existing.rows[0].image_url;
+
+        // Accept URL directly from web admin JSON body
+        if (bodyImageUrl && bodyImageUrl !== image_url) {
+            image_url = bodyImageUrl;
+        }
+
         if (req.file) {
-            // Delete old image if it exists
-            if (image_url) {
+            // Multipart upload — replace old image
+            if (image_url && !image_url.startsWith('https://')) {
                 await deleteImage(image_url).catch(e => console.warn('Old image delete warning:', e));
             }
             const uploadResult = await uploadCategoryImage(req.file.path, title || 'popup');
