@@ -913,6 +913,18 @@ router.post('/coupons', adminAuth, async (req, res) => {
             product_ids
         } = req.body;
 
+        if (!code || typeof code !== 'string' || !code.trim()) {
+            return res.status(400).json({ error: 'Coupon code is required' });
+        }
+
+        const cleanCode = code.trim().toUpperCase();
+
+        // Check for duplicate code
+        const existing = await client.query('SELECT id FROM coupons WHERE UPPER(code) = $1', [cleanCode]);
+        if (existing.rows.length > 0) {
+            return res.status(400).json({ error: `Coupon code '${cleanCode}' already exists` });
+        }
+
         await client.query('BEGIN');
 
         // Insert coupon
@@ -920,40 +932,54 @@ router.post('/coupons', adminAuth, async (req, res) => {
             INSERT INTO coupons (
                 code, description, discount_type, discount_value,
                 min_purchase_amount, max_discount_amount,
-                start_date, end_date, usage_limit
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                start_date, end_date, usage_limit, is_active
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true)
             RETURNING *
         `, [
-            code.toUpperCase(),
-            description,
-            discount_type,
-            discount_value,
-            min_purchase_amount || 0,
-            max_discount_amount,
-            start_date,
-            end_date,
-            usage_limit
+            cleanCode,
+            description || '',
+            discount_type || 'percentage',
+            Number(discount_value) || 0,
+            Number(min_purchase_amount) || 0,
+            max_discount_amount ? Number(max_discount_amount) : null,
+            start_date ? new Date(start_date) : new Date(),
+            end_date ? new Date(end_date) : new Date(Date.now() + 30 * 86400000),
+            usage_limit ? Number(usage_limit) : null
         ]);
 
         const coupon = couponResult.rows[0];
 
         // Add product associations if provided
-        if (product_ids && product_ids.length > 0) {
-            const values = product_ids.map((product_id, index) =>
-                `($1, $${index + 2})`
-            ).join(', ');
+        if (Array.isArray(product_ids) && product_ids.length > 0) {
+            try {
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS coupon_products (
+                        id SERIAL PRIMARY KEY,
+                        coupon_id INTEGER REFERENCES coupons(id) ON DELETE CASCADE,
+                        product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(coupon_id, product_id)
+                    )
+                `);
 
-            await client.query(`
-                INSERT INTO coupon_products (coupon_id, product_id)
-                VALUES ${values}
-            `, [coupon.id, ...product_ids]);
+                for (const pid of product_ids) {
+                    await client.query(`
+                        INSERT INTO coupon_products (coupon_id, product_id)
+                        VALUES ($1, $2)
+                        ON CONFLICT DO NOTHING
+                    `, [coupon.id, pid]);
+                }
+            } catch (e) {
+                console.error('Error linking coupon products:', e);
+            }
         }
 
         await client.query('COMMIT');
         res.status(201).json(coupon);
     } catch (error) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: error.message });
+        console.error('Error creating coupon:', error);
+        res.status(500).json({ error: error.message || 'Failed to create coupon' });
     } finally {
         client.release();
     }
