@@ -262,94 +262,112 @@ router.get('/products', adminAuth, async (req, res) => {
         const {
             category_id,
             search,
-            priceMin,
-            priceMax,
-            productTypes,
-            skinTypes,
-            concerns
+            status,
+            stock_status,
+            page = 1,
+            limit = 10,
         } = req.query;
+        const offset = (parseInt(page) - 1) * parseInt(limit);
 
-        let query = `
+        let where = `WHERE 1=1`;
+        const params = [];
+        let pIdx = 1;
+
+        if (category_id && category_id !== 'all') {
+            where += ` AND p.category_id = $${pIdx++}::integer`;
+            params.push(category_id);
+        }
+
+        if (search && search.trim()) {
+            where += ` AND (p.name ILIKE $${pIdx} OR COALESCE(p.sku, '') ILIKE $${pIdx} OR COALESCE(c.name, '') ILIKE $${pIdx})`;
+            params.push(`%${search.trim()}%`);
+            pIdx++;
+        }
+
+        if (status && status !== 'all') {
+            if (status === 'active') {
+                where += ` AND (p.is_active = true OR p.is_active IS NULL)`;
+            } else if (status === 'inactive') {
+                where += ` AND p.is_active = false`;
+            }
+        }
+
+        if (stock_status && stock_status !== 'all') {
+            if (stock_status === 'out_of_stock') {
+                where += ` AND (p.stock_quantity = 0 OR p.stock_quantity IS NULL)`;
+            } else if (stock_status === 'low_stock') {
+                where += ` AND p.stock_quantity > 0 AND p.stock_quantity <= 10`;
+            } else if (stock_status === 'in_stock') {
+                where += ` AND p.stock_quantity > 10`;
+            }
+        }
+
+        const countQuery = `SELECT COUNT(DISTINCT p.id) FROM products p LEFT JOIN categories c ON p.category_id = c.id ${where}`;
+        const countResult = await pool.query(countQuery, params);
+        const total = parseInt(countResult.rows[0].count);
+
+        const query = `
             SELECT 
                 p.*,
+                COALESCE(p.sku, CONCAT('SA-', UPPER(SUBSTRING(p.name, 1, 2)), '-', p.id)) as sku_display,
                 c.name as category_name,
-                COALESCE(
-                    json_agg(DISTINCT jsonb_build_object('id', cat.id, 'name', cat.name)) 
-                    FILTER (WHERE cat.id IS NOT NULL), 
-                    '[]'
-                ) as categories,
                 COALESCE(AVG(r.rating), 0) as average_rating,
                 COUNT(DISTINCT r.id) as review_count,
                 COUNT(DISTINCT o.id) as order_count
             FROM products p
             LEFT JOIN categories c ON p.category_id = c.id
-            LEFT JOIN product_categories pc_link ON p.id = pc_link.product_id
-            LEFT JOIN categories cat ON pc_link.category_id = cat.id
             LEFT JOIN reviews r ON p.id = r.product_id
             LEFT JOIN order_items oi ON p.id = oi.product_id
             LEFT JOIN orders o ON oi.order_id = o.id AND (o.is_temporary = false OR o.is_temporary IS NULL)
-            WHERE 1=1
+            ${where}
+            GROUP BY p.id, c.name
+            ORDER BY p.created_at DESC
+            LIMIT $${pIdx} OFFSET $${pIdx + 1}
         `;
-        const queryParams = [];
-        let paramCount = 1;
 
-        // Add filters with proper type casting
-        if (category_id) {
-            query += ` AND p.category_id = $${paramCount}::integer`;
-            queryParams.push(category_id);
-            paramCount++;
-        }
+        const products = await pool.query(query, [...params, parseInt(limit), offset]);
 
-        if (search) {
-            query += ` AND (p.name ILIKE $${paramCount} OR p.description ILIKE $${paramCount})`;
-            queryParams.push(`%${search}%`);
-            paramCount++;
-        }
-
-        if (priceMin) {
-            query += ` AND p.price >= $${paramCount}::numeric`;
-            queryParams.push(priceMin);
-            paramCount++;
-        }
-
-        if (priceMax) {
-            query += ` AND p.price <= $${paramCount}::numeric`;
-            queryParams.push(priceMax);
-            paramCount++;
-        }
-
-        if (productTypes) {
-            const types = productTypes.split(',');
-            query += ` AND p.product_type = ANY($${paramCount}::text[])`;
-            queryParams.push(types);
-            paramCount++;
-        }
-
-        if (skinTypes) {
-            const types = skinTypes.split(',');
-            query += ` AND p.skin_type = ANY($${paramCount}::text[])`;
-            queryParams.push(types);
-            paramCount++;
-        }
-
-        if (concerns) {
-            const concernList = concerns.split(',');
-            query += ` AND p.concerns && $${paramCount}::text[]`;
-            queryParams.push(concernList);
-            paramCount++;
-        }
-
-        // Add group by and order by clauses
-        query += ` GROUP BY p.id, c.name ORDER BY p.created_at DESC`;
-
-        const products = await pool.query(query, queryParams);
-
-        res.json({ products: products.rows });
+        res.json({ products: products.rows, total, page: parseInt(page), limit: parseInt(limit) });
     } catch (error) {
         console.error('Error in admin products route:', error);
         res.status(500).json({ error: error.message });
     }
 });
+
+// Admin products stats for dashboard stat cards
+router.get('/products/stats', adminAuth, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE is_active = true OR is_active IS NULL) as active,
+                COUNT(*) FILTER (WHERE is_active = false) as inactive,
+                COUNT(*) FILTER (WHERE stock_quantity = 0 OR stock_quantity IS NULL) as out_of_stock,
+                -- Last month counts for trend calculation
+                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as total_lm,
+                COUNT(*) FILTER (WHERE (is_active = true OR is_active IS NULL) AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as active_lm,
+                COUNT(*) FILTER (WHERE is_active = false AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as inactive_lm,
+                COUNT(*) FILTER (WHERE (stock_quantity = 0 OR stock_quantity IS NULL) AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as out_of_stock_lm
+            FROM products
+        `);
+        const r = result.rows[0];
+        const pct = (curr, prev) => {
+            const c = parseInt(curr || 0);
+            const p = parseInt(prev || 0);
+            if (p === 0) return c > 0 ? 100 : 0;
+            return Math.round(((c - p) / p) * 1000) / 10;
+        };
+        res.json({
+            total: parseInt(r.total || 0), total_trend: pct(r.total, r.total_lm),
+            active: parseInt(r.active || 0), active_trend: pct(r.active, r.active_lm),
+            inactive: parseInt(r.inactive || 0), inactive_trend: pct(r.inactive, r.inactive_lm),
+            out_of_stock: parseInt(r.out_of_stock || 0), out_of_stock_trend: pct(r.out_of_stock, r.out_of_stock_lm),
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 
 router.get('/orders', adminAuth, async (req, res) => {
     try {
