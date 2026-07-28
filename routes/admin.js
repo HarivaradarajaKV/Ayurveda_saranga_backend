@@ -353,41 +353,105 @@ router.get('/products', adminAuth, async (req, res) => {
 
 router.get('/orders', adminAuth, async (req, res) => {
     try {
-        const orders = await pool.query(`
-            SELECT 
-                o.*,
+        const { status, search, page = 1, limit = 20, payment } = req.query;
+        const offset = (parseInt(page) - 1) * parseInt(limit);
+
+        let where = `WHERE (o.is_temporary = false OR o.is_temporary IS NULL)`;
+        const params = [];
+        let pIdx = 1;
+
+        if (status && status !== 'all') {
+            where += ` AND LOWER(o.status) = $${pIdx++}`;
+            params.push(status.toLowerCase());
+        }
+        if (payment && payment !== 'all') {
+            where += ` AND LOWER(o.payment_method) = $${pIdx++}`;
+            params.push(payment.toLowerCase());
+        }
+        if (search && search.trim()) {
+            where += ` AND (CAST(o.id AS TEXT) ILIKE $${pIdx} OR COALESCE(u.name,'') ILIKE $${pIdx} OR COALESCE(u.email,'') ILIKE $${pIdx})`;
+            params.push(`%${search.trim()}%`);
+            pIdx++;
+        }
+
+        const countResult = await pool.query(
+            `SELECT COUNT(*) FROM orders o LEFT JOIN users u ON o.user_id = u.id ${where}`,
+            params
+        );
+        const total = parseInt(countResult.rows[0].count);
+
+        const orders = await pool.query(
+            `SELECT 
+                o.id, o.status, o.total_amount, o.created_at, o.updated_at,
+                o.payment_method, o.payment_status,
                 CASE 
                     WHEN LOWER(o.payment_method) = 'cod' OR LOWER(o.payment_method_type) = 'cod' THEN 'Cash on Delivery'
+                    WHEN LOWER(o.payment_method) = 'upi' THEN 'UPI'
+                    WHEN LOWER(o.payment_method) = 'netbanking' OR LOWER(o.payment_method) = 'net_banking' THEN 'Net Banking'
+                    WHEN LOWER(o.payment_method) = 'creditcard' OR LOWER(o.payment_method) = 'credit_card' THEN 'Credit Card'
                     ELSE 'Online Payment'
                 END as payment_method_display,
-                o.shipping_postal_code AS shipping_pincode,
-                COALESCE(u.name, o.shipping_full_name, 'Customer') as user_name,
-                COALESCE(u.email, '—') as user_email,
-                COALESCE(
-                    (
-                        SELECT json_agg(json_build_object(
-                            'product_id', oi.product_id,
-                            'product_name', p.name,
-                            'quantity', oi.quantity,
-                            'price_at_time', oi.price_at_time
-                        ))
-                        FROM order_items oi
-                        LEFT JOIN products p ON oi.product_id = p.id
-                        WHERE oi.order_id = o.id
-                    ),
-                    '[]'::json
-                ) as items
+                o.shipping_full_name, o.shipping_city, o.shipping_state,
+                COALESCE(u.name, o.shipping_full_name, 'Customer') as customer_name,
+                COALESCE(u.email, '—') as customer_email,
+                (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) as item_count,
+                o.shipment_status,
+                o.awb_number,
+                o.courier_name
             FROM orders o
             LEFT JOIN users u ON o.user_id = u.id
-            WHERE (o.is_temporary = false OR o.is_temporary IS NULL)
+            ${where}
             ORDER BY o.created_at DESC
-        `);
+            LIMIT $${pIdx} OFFSET $${pIdx + 1}`,
+            [...params, parseInt(limit), offset]
+        );
 
-        res.json(orders.rows);
+        res.json({ orders: orders.rows, total, page: parseInt(page), limit: parseInt(limit) });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
+
+// Admin orders stats: total per status + last-week comparison
+router.get('/orders/stats', adminAuth, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE is_temporary = false OR is_temporary IS NULL) as total,
+                COUNT(*) FILTER (WHERE LOWER(status) = 'pending' AND (is_temporary = false OR is_temporary IS NULL)) as pending,
+                COUNT(*) FILTER (WHERE LOWER(status) = 'processing' AND (is_temporary = false OR is_temporary IS NULL)) as processing,
+                COUNT(*) FILTER (WHERE LOWER(status) = 'shipped' AND (is_temporary = false OR is_temporary IS NULL)) as shipped,
+                COUNT(*) FILTER (WHERE LOWER(status) = 'delivered' AND (is_temporary = false OR is_temporary IS NULL)) as delivered,
+                COUNT(*) FILTER (WHERE LOWER(status) = 'cancelled' AND (is_temporary = false OR is_temporary IS NULL)) as cancelled,
+                -- Last week counts
+                COUNT(*) FILTER (WHERE (is_temporary = false OR is_temporary IS NULL) AND created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days') as total_lw,
+                COUNT(*) FILTER (WHERE LOWER(status) = 'pending' AND (is_temporary = false OR is_temporary IS NULL) AND created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days') as pending_lw,
+                COUNT(*) FILTER (WHERE LOWER(status) = 'processing' AND (is_temporary = false OR is_temporary IS NULL) AND created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days') as processing_lw,
+                COUNT(*) FILTER (WHERE LOWER(status) = 'shipped' AND (is_temporary = false OR is_temporary IS NULL) AND created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days') as shipped_lw,
+                COUNT(*) FILTER (WHERE LOWER(status) = 'delivered' AND (is_temporary = false OR is_temporary IS NULL) AND created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days') as delivered_lw,
+                COUNT(*) FILTER (WHERE LOWER(status) = 'cancelled' AND (is_temporary = false OR is_temporary IS NULL) AND created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days') as cancelled_lw
+            FROM orders
+        `);
+        const r = result.rows[0];
+        const pct = (curr, prev) => {
+            const c = parseInt(curr || 0);
+            const p = parseInt(prev || 0);
+            if (p === 0) return c > 0 ? 100 : 0;
+            return Math.round(((c - p) / p) * 1000) / 10;
+        };
+        res.json({
+            total: parseInt(r.total), total_trend: pct(r.total, r.total_lw),
+            pending: parseInt(r.pending), pending_trend: pct(r.pending, r.pending_lw),
+            processing: parseInt(r.processing), processing_trend: pct(r.processing, r.processing_lw),
+            shipped: parseInt(r.shipped), shipped_trend: pct(r.shipped, r.shipped_lw),
+            delivered: parseInt(r.delivered), delivered_trend: pct(r.delivered, r.delivered_lw),
+            cancelled: parseInt(r.cancelled), cancelled_trend: pct(r.cancelled, r.cancelled_lw),
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 
 // Get all product reviews with product and user info
 router.get('/reviews', adminAuth, async (req, res) => {
