@@ -1367,4 +1367,83 @@ router.patch('/banners/reorder', adminAuth, async (req, res) => {
     }
 });
 
+// Bulk update product offer percentages
+router.post('/inventory/bulk-offer', adminAuth, async (req, res) => {
+    try {
+        const { offer_percentage, category_id, product_ids } = req.body;
+        const offerNum = Math.max(0, Math.min(100, parseInt(offer_percentage || '0', 10)));
+
+        let query = '';
+        let params = [];
+
+        if (Array.isArray(product_ids) && product_ids.length > 0) {
+            query = `UPDATE products SET offer_percentage = $1, updated_at = CURRENT_TIMESTAMP WHERE id = ANY($2::int[]) RETURNING id, name, price, offer_percentage`;
+            params = [offerNum, product_ids];
+        } else if (category_id && category_id !== 'all') {
+            query = `UPDATE products SET offer_percentage = $1, updated_at = CURRENT_TIMESTAMP WHERE category_id = $2 OR category = (SELECT name FROM categories WHERE id = $2) RETURNING id, name, price, offer_percentage`;
+            params = [offerNum, category_id];
+        } else {
+            query = `UPDATE products SET offer_percentage = $1, updated_at = CURRENT_TIMESTAMP RETURNING id, name, price, offer_percentage`;
+            params = [offerNum];
+        }
+
+        const result = await pool.query(query, params);
+        res.json({
+            success: true,
+            message: `Offer percentage updated to ${offerNum}% for ${result.rows.length} product(s).`,
+            count: result.rows.length,
+            updated: result.rows
+        });
+    } catch (error) {
+        console.error('Error updating bulk offer percentages:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Quick inline update for stock or offer percentage of a single product
+router.patch('/inventory/product/:id', adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { offer_percentage, stock_quantity, price } = req.body;
+
+        const updates = [];
+        const params = [];
+        let pIndex = 1;
+
+        if (offer_percentage !== undefined) {
+            updates.push(`offer_percentage = $${pIndex++}`);
+            params.push(Math.max(0, Math.min(100, parseInt(offer_percentage, 10))));
+        }
+        if (stock_quantity !== undefined) {
+            updates.push(`stock_quantity = $${pIndex++}`);
+            params.push(Math.max(0, parseInt(stock_quantity, 10)));
+        }
+        if (price !== undefined) {
+            updates.push(`price = $${pIndex++}`);
+            params.push(Math.max(0, parseFloat(price)));
+        }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ error: 'No fields provided to update' });
+        }
+
+        updates.push(`updated_at = CURRENT_TIMESTAMP`);
+        params.push(id);
+
+        const result = await pool.query(
+            `UPDATE products SET ${updates.join(', ')} WHERE id = $${pIndex} RETURNING *`,
+            params
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Product not found' });
+        }
+
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Error updating product inventory:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 module.exports = router;
