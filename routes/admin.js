@@ -452,6 +452,24 @@ router.get('/orders/stats', adminAuth, async (req, res) => {
     }
 });
 
+// Update order status
+router.put('/orders/:id/status', adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        const result = await pool.query(
+            'UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+            [status, id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+        res.json({ success: true, order: result.rows[0] });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 
 // Get all product reviews with product and user info
 router.get('/reviews', adminAuth, async (req, res) => {
