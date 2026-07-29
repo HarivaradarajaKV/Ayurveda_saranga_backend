@@ -148,6 +148,7 @@ const invoicesRouter = require('./routes/invoices');
 
 app.use('/api/auth', authRouter);
 app.use('/api/products', productsRouter);
+app.use('/api/admin/products', productsRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/addresses', addressesRouter);
 app.use('/api/brand-reviews', brandReviewsRouter);
