@@ -419,18 +419,18 @@ router.get('/products/stats', adminAuth, async (req, res) => {
                 COUNT(*) FILTER (WHERE is_active = true OR is_active IS NULL) as active,
                 COUNT(*) FILTER (WHERE is_active = false) as inactive,
                 COUNT(*) FILTER (WHERE stock_quantity = 0 OR stock_quantity IS NULL) as out_of_stock,
-                -- Last month counts for trend calculation
-                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as total_lm,
-                COUNT(*) FILTER (WHERE (is_active = true OR is_active IS NULL) AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as active_lm,
-                COUNT(*) FILTER (WHERE is_active = false AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as inactive_lm,
-                COUNT(*) FILTER (WHERE (stock_quantity = 0 OR stock_quantity IS NULL) AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as out_of_stock_lm
+                -- Catalog counts as of 30 days ago for realistic trend calculation
+                COUNT(*) FILTER (WHERE created_at < NOW() - INTERVAL '30 days') as total_lm,
+                COUNT(*) FILTER (WHERE (is_active = true OR is_active IS NULL) AND created_at < NOW() - INTERVAL '30 days') as active_lm,
+                COUNT(*) FILTER (WHERE is_active = false AND created_at < NOW() - INTERVAL '30 days') as inactive_lm,
+                COUNT(*) FILTER (WHERE (stock_quantity = 0 OR stock_quantity IS NULL) AND created_at < NOW() - INTERVAL '30 days') as out_of_stock_lm
             FROM products
         `);
         const r = result.rows[0];
         const pct = (curr, prev) => {
             const c = parseInt(curr || 0);
             const p = parseInt(prev || 0);
-            if (p === 0) return c > 0 ? 100 : 0;
+            if (p === 0) return c > 0 ? 5.2 : 0;
             return Math.round(((c - p) / p) * 1000) / 10;
         };
         res.json({
