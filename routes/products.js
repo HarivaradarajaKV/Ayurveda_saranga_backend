@@ -383,41 +383,15 @@ router.get('/', async (req, res) => {
 
         const products = await pool.query(query, queryParams);
 
-        // Process the results to ensure all required fields are present
+        // Process the results to ensure all required fields are present and preserved
         const processedProducts = products.rows.map(product => {
-            const {
-                id, name, description, price, category, image_url,
-                image_url2, image_url3, image_url4, usage_instructions, size,
-                benefits, ingredients, product_details, stock_quantity,
-                created_at, category_name, parent_category_name,
-                average_rating, review_count, offer_percentage, is_new_arrival, is_best_seller, categories
-            } = product;
-
             return {
-                id,
-                name,
-                description,
-                price,
-                category,
-                image_url,
-                image_url2,
-                image_url3,
-                image_url4,
-                usage_instructions,
-                size,
-                benefits,
-                ingredients,
-                product_details,
-                stock_quantity: stock_quantity || 0,
-                created_at,
-                category_name,
-                parent_category_name,
-                average_rating,
-                review_count,
-                offer_percentage: offer_percentage || 0,
-                is_new_arrival: is_new_arrival || false,
-                is_best_seller: is_best_seller || false,
-                categories: categories || []
+                ...product,
+                stock_quantity: product.stock_quantity != null ? parseInt(product.stock_quantity, 10) : 0,
+                offer_percentage: product.offer_percentage != null ? parseFloat(product.offer_percentage) : 0,
+                is_new_arrival: product.is_new_arrival || false,
+                is_best_seller: product.is_best_seller || false,
+                categories: product.categories || []
             };
         });
 
