@@ -676,12 +676,16 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
         const image_url3 = mediaList[2]?.url || null;
         const image_url4 = mediaList[3]?.url || null;
 
+        const productStatus = status || 'active';
+        const isActiveBool = productStatus !== 'inactive';
+
         const newProduct = await pool.query(
             `INSERT INTO products (
                 name, description, price, category_id, category, stock_quantity,
                 usage_instructions, size, benefits, ingredients, product_details,
-                image_url, image_url2, image_url3, image_url4, offer_percentage, media
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) 
+                image_url, image_url2, image_url3, image_url4, offer_percentage, media,
+                status, is_active
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) 
             RETURNING *`,
             [
                 name,
@@ -700,7 +704,9 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
                 image_url3,
                 image_url4,
                 offerNum,
-                JSON.stringify(mediaList)
+                JSON.stringify(mediaList),
+                productStatus,
+                isActiveBool
             ]
         );
 
@@ -943,8 +949,10 @@ router.put('/:id', adminAuth, uploadArray, async (req, res) => {
                 offer_percentage = $15,
                 category = COALESCE($16, category),
                 media = $17,
+                status = COALESCE($18, status),
+                is_active = CASE WHEN $18 = 'inactive' THEN false ELSE true END,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = $18 
+            WHERE id = $19 
             RETURNING *
         `, [
             name,
@@ -964,7 +972,8 @@ router.put('/:id', adminAuth, uploadArray, async (req, res) => {
             offerNum,
             categoryName, // $16
             JSON.stringify(finalMedia), // $17
-            id // $18
+            status || null, // $18
+            id // $19
         ]);
 
         if (updatedProduct.rows.length === 0) {
