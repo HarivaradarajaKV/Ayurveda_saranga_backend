@@ -150,32 +150,15 @@ async function uploadCategoryImage(filePath, categoryInfos) {
  * @param {number} imageIndex - Image index (1, 2, or 3)
  * @returns {Promise<{url: string, path: string}>}
  */
-async function uploadProductImage(filePath, productId, imageIndex) {
+async function uploadProductImage(filePath, productId, imageIndex, originalName) {
     const fs = require('fs');
     const path = require('path');
 
     try {
-        // Auto-square crop to 2400x2400 for standard static images (exclude GIFs to preserve animations)
-        const ext = path.extname(filePath).toLowerCase();
-        if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
-            try {
-                console.log('Squaring image/GIF to 2400x2400 at:', filePath);
-                const jimpModule = require('jimp');
-                const Jimp = jimpModule.Jimp || jimpModule;
-                const img = await Jimp.read(filePath);
-                const size = Math.min(img.bitmap.width, img.bitmap.height);
-                const x = Math.round((img.bitmap.width - size) / 2);
-                const y = Math.round((img.bitmap.height - size) / 2);
-                await img.crop(x, y, size, size).resize(2400, 2400).writeAsync(filePath);
-                console.log('Successfully center-squared image/GIF to 2400x2400:', filePath);
-            } catch (cropError) {
-                console.warn('Warning: Failed to auto-square crop using Jimp, proceeding with original:', cropError.message);
-            }
-        }
-
         // Read file
         const fileBuffer = fs.readFileSync(filePath);
-        const fileName = `product-${productId}-image${imageIndex}${path.extname(filePath)}`;
+        const ext = path.extname(originalName || filePath).toLowerCase() || '.jpg';
+        const fileName = `product-${productId}-image${imageIndex}-${Date.now()}${ext}`;
 
         // Determine content type
         const contentTypeMap = {
@@ -271,6 +254,7 @@ async function createSignedUploadUrl(fileName) {
 
         return {
             signedUrl: data.signedUrl,
+            uploadUrl: data.signedUrl,
             publicUrl: publicUrlData.publicUrl,
             path: uniqueFileName
         };

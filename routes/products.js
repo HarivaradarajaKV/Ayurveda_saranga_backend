@@ -607,16 +607,15 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
         }
 
 
-        // Handle pre-uploaded/existing media list (if direct-uploaded on client)
+        // Handle pre-uploaded/existing media list (if direct-uploaded on client or sent in form)
         let mediaList = [];
-        if (req.body.existing_media) {
+        const rawMedia = req.body.existing_media || req.body.media_json || req.body.media;
+        if (rawMedia) {
             try {
-                mediaList = typeof req.body.existing_media === 'string' 
-                    ? JSON.parse(req.body.existing_media) 
-                    : req.body.existing_media;
+                mediaList = typeof rawMedia === 'string' ? JSON.parse(rawMedia) : rawMedia;
                 if (!Array.isArray(mediaList)) mediaList = [];
             } catch (err) {
-                console.error('Error parsing existing_media:', err);
+                console.error('Error parsing media:', err);
                 mediaList = [];
             }
         }
@@ -626,7 +625,7 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
         try {
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                const result = await uploadProductImage(file.path, 'temp', i + 1);
+                const result = await uploadProductImage(file.path, 'temp', i + 1, file.originalname);
                 
                 const ext = path.extname(file.originalname).toLowerCase();
                 let fileType = 'image';
@@ -661,10 +660,11 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
             });
         }
 
-        const image_url = mediaList[0]?.url || null;
-        const image_url2 = mediaList[1]?.url || null;
-        const image_url3 = mediaList[2]?.url || null;
-        const image_url4 = mediaList[3]?.url || null;
+        // Ensure legacy image columns are populated if mediaList is provided or explicit body params exist
+        const image_url = mediaList[0]?.url || req.body.image_url || null;
+        const image_url2 = mediaList[1]?.url || req.body.image_url2 || null;
+        const image_url3 = mediaList[2]?.url || req.body.image_url3 || null;
+        const image_url4 = mediaList[3]?.url || req.body.image_url4 || null;
 
         const productStatus = status || 'active';
         const isActiveBool = productStatus !== 'inactive';
@@ -825,21 +825,21 @@ router.put('/:id', adminAuth, uploadArray, async (req, res) => {
 
         // 1. Determine existing media list
         let finalMedia = [];
-        if (existing_media) {
+        const rawMedia = req.body.existing_media || req.body.media_json || req.body.media;
+        if (rawMedia) {
             try {
-                finalMedia = typeof existing_media === 'string' ? JSON.parse(existing_media) : existing_media;
+                finalMedia = typeof rawMedia === 'string' ? JSON.parse(rawMedia) : rawMedia;
                 if (!Array.isArray(finalMedia)) finalMedia = [];
             } catch (err) {
-                console.error('Error parsing existing_media:', err);
+                console.error('Error parsing media:', err);
                 finalMedia = [];
             }
         } else {
-            // Fallback: Retain database list if no existing_media is specified
+            // Fallback: Retain database list if no media is specified
             finalMedia = Array.isArray(current.media) ? current.media : [];
         }
 
         // Identify which old media items were removed so we can delete them from Supabase if needed
-        // Exclude temporary placeholders starting with 'new_file_' when calculating kept URLs
         const currentMediaList = Array.isArray(current.media) ? current.media : [];
         const keptUrls = new Set(
             finalMedia
@@ -859,7 +859,7 @@ router.put('/:id', adminAuth, uploadArray, async (req, res) => {
         try {
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                const result = await uploadProductImage(file.path, id, i + 1);
+                const result = await uploadProductImage(file.path, id, i + 1, file.originalname);
                 
                 const ext = path.extname(file.originalname).toLowerCase();
                 let fileType = 'image';
@@ -897,10 +897,10 @@ router.put('/:id', adminAuth, uploadArray, async (req, res) => {
         }
 
         // 3. Keep legacy columns populated for backward compatibility
-        const image_url = finalMedia[0]?.url || null;
-        const image_url2 = finalMedia[1]?.url || null;
-        const image_url3 = finalMedia[2]?.url || null;
-        const image_url4 = finalMedia[3]?.url || null;
+        const image_url = finalMedia[0]?.url || req.body.image_url || null;
+        const image_url2 = finalMedia[1]?.url || req.body.image_url2 || null;
+        const image_url3 = finalMedia[2]?.url || req.body.image_url3 || null;
+        const image_url4 = finalMedia[3]?.url || req.body.image_url4 || null;
 
         // Rest of the update logic
         let offerNum = 0;
