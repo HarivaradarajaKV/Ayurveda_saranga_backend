@@ -40,4 +40,12 @@ pool.on('error', (err, client) => {
     console.error('Unexpected error on idle client', err?.message || err);
 });
 
-module.exports = pool; 
+// Ensure required columns exist in products table
+pool.query(`
+    ALTER TABLE products 
+    ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active',
+    ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+`).catch(err => console.error('Database column initialization notice:', err?.message || err));
+
+module.exports = pool;
+ 

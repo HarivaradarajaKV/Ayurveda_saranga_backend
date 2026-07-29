@@ -521,7 +521,9 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
             benefits,
             ingredients,
             product_details,
-            offer_percentage
+            offer_percentage,
+            status,
+            sku
         } = req.body;
 
         // Basic validation
@@ -666,14 +668,15 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
 
         const productStatus = status || 'active';
         const isActiveBool = productStatus !== 'inactive';
+        const productSku = sku || `SA-${(name || 'PR').toUpperCase().slice(0, 3)}-${Date.now().toString().slice(-4)}`;
 
         const newProduct = await pool.query(
             `INSERT INTO products (
                 name, description, price, category_id, category, stock_quantity,
                 usage_instructions, size, benefits, ingredients, product_details,
                 image_url, image_url2, image_url3, image_url4, offer_percentage, media,
-                status, is_active
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) 
+                status, is_active, sku
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) 
             RETURNING *`,
             [
                 name,
@@ -694,7 +697,8 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
                 offerNum,
                 JSON.stringify(mediaList),
                 productStatus,
-                isActiveBool
+                isActiveBool,
+                productSku
             ]
         );
 
@@ -770,7 +774,9 @@ router.put('/:id', adminAuth, uploadArray, async (req, res) => {
             ingredients,
             product_details,
             offer_percentage,
-            existing_media
+            existing_media,
+            status,
+            sku
         } = req.body;
 
         // Sanitize category_id - it might come as an array or stringified array
@@ -939,6 +945,7 @@ router.put('/:id', adminAuth, uploadArray, async (req, res) => {
                 media = $17,
                 status = COALESCE($18, status),
                 is_active = CASE WHEN $18 = 'inactive' THEN false ELSE true END,
+                sku = COALESCE($20, sku),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $19 
             RETURNING *
@@ -961,7 +968,8 @@ router.put('/:id', adminAuth, uploadArray, async (req, res) => {
             categoryName, // $16
             JSON.stringify(finalMedia), // $17
             status || null, // $18
-            id // $19
+            id, // $19
+            sku || null // $20
         ]);
 
         if (updatedProduct.rows.length === 0) {
