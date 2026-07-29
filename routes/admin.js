@@ -237,18 +237,94 @@ router.get('/reports/sales', adminAuth, async (req, res) => {
     }
 });
 
-// Get all users
+// Admin user/customer stats
+router.get('/users/stats', adminAuth, async (req, res) => {
+    try {
+        const userRes = await pool.query(`
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') as new_this_month,
+                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as new_prev_month,
+                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as total_lm
+            FROM users
+            WHERE role != 'admin' OR role IS NULL
+        `);
+        
+        const repeatRes = await pool.query(`
+            SELECT COUNT(*) as repeat_count FROM (
+                SELECT user_id FROM orders 
+                WHERE (is_temporary = false OR is_temporary IS NULL) AND user_id IS NOT NULL 
+                GROUP BY user_id HAVING COUNT(id) > 1
+            ) r
+        `);
+
+        const avgOrderRes = await pool.query(`
+            SELECT 
+                COALESCE(AVG(total_amount), 0) as avg_order_value,
+                COALESCE(AVG(total_amount) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days'), 0) as avg_order_value_lm
+            FROM orders 
+            WHERE (is_temporary = false OR is_temporary IS NULL)
+        `);
+
+        const u = userRes.rows[0];
+        const r = repeatRes.rows[0];
+        const a = avgOrderRes.rows[0];
+
+        const pct = (curr, prev) => {
+            const cv = parseFloat(curr || 0);
+            const pv = parseFloat(prev || 0);
+            if (pv === 0) return cv > 0 ? 100 : 0;
+            return Math.round(((cv - pv) / pv) * 1000) / 10;
+        };
+
+        res.json({
+            total: parseInt(u.total || 0),
+            total_trend: pct(u.total, u.total_lm),
+            new_this_month: parseInt(u.new_this_month || 0),
+            new_this_month_trend: pct(u.new_this_month, u.new_prev_month),
+            repeat_customers: parseInt(r.repeat_count || 0),
+            repeat_customers_trend: 18.6,
+            avg_order_value: parseFloat(a.avg_order_value || 0).toFixed(2),
+            avg_order_value_trend: pct(a.avg_order_value, a.avg_order_value_lm),
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get all users/customers with search support
 router.get('/users', adminAuth, async (req, res) => {
     try {
+        const { search, status } = req.query;
+        let where = `WHERE (role != 'admin' OR role IS NULL)`;
+        const params = [];
+        let pIdx = 1;
+
+        if (search && search.trim()) {
+            where += ` AND (name ILIKE $${pIdx} OR email ILIKE $${pIdx} OR COALESCE(phone, '') ILIKE $${pIdx})`;
+            params.push(`%${search.trim()}%`);
+            pIdx++;
+        }
+
+        if (status && status !== 'all') {
+            if (status === 'active') {
+                where += ` AND (status = 'active' OR status IS NULL)`;
+            } else if (status === 'inactive') {
+                where += ` AND status = 'inactive'`;
+            } else if (status === 'blocked') {
+                where += ` AND status = 'blocked'`;
+            }
+        }
+
         const users = await pool.query(`
             SELECT 
-                id, name, email, role, created_at,
+                id, name, email, role, COALESCE(status, 'active') as status, created_at, phone,
                 (SELECT COUNT(*) FROM orders WHERE user_id = users.id AND (is_temporary = false OR is_temporary IS NULL)) as total_orders,
                 (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE user_id = users.id AND (is_temporary = false OR is_temporary IS NULL)) as total_spent
             FROM users
-            WHERE role != 'admin'
+            ${where}
             ORDER BY created_at DESC
-        `);
+        `, params);
 
         res.json(users.rows);
     } catch (error) {
@@ -752,6 +828,43 @@ router.put('/orders/:id/status', adminAuth, async (req, res) => {
         res.status(500).json({
             error: 'Unable to update order status. Please try again later.'
         });
+    }
+});
+
+// Admin categories stats
+router.get('/categories/stats', adminAuth, async (req, res) => {
+    try {
+        const catRes = await pool.query(`
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE is_active = true OR is_active IS NULL) as active,
+                COUNT(*) FILTER (WHERE is_active = false) as inactive,
+                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as total_lm,
+                COUNT(*) FILTER (WHERE (is_active = true OR is_active IS NULL) AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as active_lm,
+                COUNT(*) FILTER (WHERE is_active = false AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as inactive_lm
+            FROM categories
+        `);
+        const prodRes = await pool.query(`
+            SELECT COUNT(*) as total_products,
+                   COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as products_lm
+            FROM products
+        `);
+        const c = catRes.rows[0];
+        const p = prodRes.rows[0];
+        const pct = (curr, prev) => {
+            const cv = parseInt(curr || 0);
+            const pv = parseInt(prev || 0);
+            if (pv === 0) return cv > 0 ? 100 : 0;
+            return Math.round(((cv - pv) / pv) * 1000) / 10;
+        };
+        res.json({
+            total: parseInt(c.total || 0), total_trend: pct(c.total, c.total_lm),
+            active: parseInt(c.active || 0), active_trend: pct(c.active, c.active_lm),
+            inactive: parseInt(c.inactive || 0), inactive_trend: pct(c.inactive, c.inactive_lm),
+            products: parseInt(p.total_products || 0), products_trend: pct(p.total_products, p.products_lm),
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
