@@ -662,11 +662,20 @@ router.post('/', adminAuth, uploadArray, async (req, res) => {
                     fileType = 'document';
                 }
                 
-                mediaList.push({
-                    url: result.url,
-                    type: fileType
-                });
-                console.log(`Media ${mediaList.length} (${fileType}) uploaded to Supabase:`, result.url);
+                const placeholder = `new_file_${i}`;
+                const idx = mediaList.findIndex(m => m && typeof m === 'object' && m.url === placeholder);
+                if (idx !== -1) {
+                    mediaList[idx].url = result.url;
+                    mediaList[idx].type = fileType;
+                    console.log(`Placed newly created product media at position ${idx + 1} using placeholder: ${placeholder}`);
+                } else {
+                    mediaList.push({
+                        url: result.url,
+                        type: fileType
+                    });
+                    console.log(`Appended media directly to new product:`, result.url);
+                }
+                console.log(`Media ${i + 1} (${fileType}) uploaded to Supabase:`, result.url);
             }
         } catch (uploadError) {
             console.error('Error uploading media to Supabase:', uploadError);
