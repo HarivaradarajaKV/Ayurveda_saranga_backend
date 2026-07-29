@@ -385,8 +385,19 @@ router.get('/', async (req, res) => {
 
         // Process the results to ensure all required fields are present and preserved
         const processedProducts = products.rows.map(product => {
+            let parsedMedia = [];
+            if (product.media) {
+                if (Array.isArray(product.media)) {
+                    parsedMedia = product.media;
+                } else if (typeof product.media === 'string') {
+                    try { parsedMedia = JSON.parse(product.media); } catch (e) { parsedMedia = []; }
+                } else if (typeof product.media === 'object') {
+                    parsedMedia = [product.media];
+                }
+            }
             return {
                 ...product,
+                media: Array.isArray(parsedMedia) ? parsedMedia : [],
                 stock_quantity: product.stock_quantity != null ? parseInt(product.stock_quantity, 10) : 0,
                 offer_percentage: product.offer_percentage != null ? parseFloat(product.offer_percentage) : 0,
                 is_new_arrival: product.is_new_arrival || false,
@@ -488,8 +499,20 @@ router.get('/:id', async (req, res) => {
             `, [productData.id])
         ]);
 
+        let parsedMedia = [];
+        if (productData.media) {
+            if (Array.isArray(productData.media)) {
+                parsedMedia = productData.media;
+            } else if (typeof productData.media === 'string') {
+                try { parsedMedia = JSON.parse(productData.media); } catch (e) { parsedMedia = []; }
+            } else if (typeof productData.media === 'object') {
+                parsedMedia = [productData.media];
+            }
+        }
+
         const result = {
             ...productData,
+            media: Array.isArray(parsedMedia) ? parsedMedia : [],
             is_new_arrival: naCheck.rows.length > 0,
             is_best_seller: bsCheck.rows.length > 0,
             categories: categoriesResult.rows,
