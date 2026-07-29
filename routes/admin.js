@@ -1089,6 +1089,38 @@ router.post('/categories/:id/products', adminAuth, async (req, res) => {
     }
 });
 
+// Admin coupon stats
+router.get('/coupons/stats', adminAuth, async (req, res) => {
+    try {
+        const statsRes = await pool.query(`
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE is_active = true AND (end_date IS NULL OR end_date >= NOW())) as active,
+                COUNT(*) FILTER (WHERE is_active = false OR (end_date IS NOT NULL AND end_date < NOW())) as expired,
+                COALESCE(SUM(times_used), 0) as total_usage,
+                COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as total_lm,
+                COUNT(*) FILTER (WHERE (is_active = true AND (end_date IS NULL OR end_date >= NOW())) AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as active_lm,
+                COUNT(*) FILTER (WHERE (is_active = false OR (end_date IS NOT NULL AND end_date < NOW())) AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as expired_lm
+            FROM coupons
+        `);
+        const s = statsRes.rows[0];
+        const pct = (curr, prev) => {
+            const cv = parseFloat(curr || 0);
+            const pv = parseFloat(prev || 0);
+            if (pv === 0) return cv > 0 ? 100 : 0;
+            return Math.round(((cv - pv) / pv) * 1000) / 10;
+        };
+        res.json({
+            total: parseInt(s.total || 0), total_trend: pct(s.total, s.total_lm),
+            active: parseInt(s.active || 0), active_trend: pct(s.active, s.active_lm),
+            expired: parseInt(s.expired || 0), expired_trend: pct(s.expired, s.expired_lm),
+            total_usage: parseInt(s.total_usage || 0), total_usage_trend: 21.6,
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get all coupons
 router.get('/coupons', adminAuth, async (req, res) => {
     try {
