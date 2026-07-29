@@ -33,7 +33,7 @@ router.get('/', async (req, res) => {
         await ensureBannersTable();
         const { platform, section } = req.query;
 
-        let conditions = ['is_active = TRUE'];
+        let conditions = ['is_active = TRUE AND (start_date IS NULL OR start_date <= NOW()) AND (end_date IS NULL OR end_date >= NOW())'];
         const params = [];
 
         if (platform) {

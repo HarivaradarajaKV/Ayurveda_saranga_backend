@@ -1473,10 +1473,14 @@ async function ensureBannersTable() {
                 is_active   BOOLEAN DEFAULT TRUE,
                 impressions INTEGER DEFAULT 0,
                 clicks      INTEGER DEFAULT 0,
+                start_date  TIMESTAMPTZ,
+                end_date    TIMESTAMPTZ,
                 created_at  TIMESTAMPTZ DEFAULT NOW()
             );
             ALTER TABLE banners ADD COLUMN IF NOT EXISTS impressions INTEGER DEFAULT 0;
             ALTER TABLE banners ADD COLUMN IF NOT EXISTS clicks INTEGER DEFAULT 0;
+            ALTER TABLE banners ADD COLUMN IF NOT EXISTS start_date TIMESTAMPTZ;
+            ALTER TABLE banners ADD COLUMN IF NOT EXISTS end_date TIMESTAMPTZ;
         `);
     } catch (err) {
         console.error('Error ensuring banners table:', err.message);
@@ -1490,8 +1494,8 @@ router.get('/banners/stats', adminAuth, async (req, res) => {
         const statsRes = await pool.query(`
             SELECT
                 COUNT(*) as total,
-                COUNT(*) FILTER (WHERE is_active = true) as active,
-                COUNT(*) FILTER (WHERE is_active = false) as scheduled,
+                COUNT(*) FILTER (WHERE is_active = true AND (start_date IS NULL OR start_date <= NOW()) AND (end_date IS NULL OR end_date >= NOW())) as active,
+                COUNT(*) FILTER (WHERE (start_date > NOW()) OR (is_active = false AND (start_date IS NOT NULL OR end_date IS NOT NULL))) as scheduled,
                 COALESCE(SUM(impressions), 0) as db_impressions,
                 COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as total_lm,
                 COUNT(*) FILTER (WHERE is_active = true AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as active_lm,
@@ -1536,11 +1540,11 @@ router.get('/banners', adminAuth, async (req, res) => {
     }
 });
 
-// POST create banner (with synchronous image upload)
+// POST create banner (with synchronous image upload & schedule dates)
 router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
     try {
         await ensureBannersTable();
-        const { title, link_type, link_value, platform, section, sort_order, is_active } = req.body;
+        const { title, link_type, link_value, platform, section, sort_order, is_active, start_date, end_date } = req.body;
 
         let image_url = req.body.image_url || null;
 
@@ -1559,8 +1563,8 @@ router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
         }
 
         const result = await pool.query(
-            `INSERT INTO banners (title, image_url, link_type, link_value, platform, section, sort_order, is_active)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `INSERT INTO banners (title, image_url, link_type, link_value, platform, section, sort_order, is_active, start_date, end_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING *`,
             [
                 title || null,
@@ -1570,7 +1574,9 @@ router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
                 platform || 'web',
                 section || 'top',
                 sort_order != null ? parseInt(sort_order) : 0,
-                is_active !== undefined ? (is_active === 'false' || is_active === false ? false : true) : true
+                is_active !== undefined ? (is_active === 'false' || is_active === false ? false : true) : true,
+                start_date || null,
+                end_date || null,
             ]
         );
 
@@ -1581,11 +1587,11 @@ router.post('/banners', adminAuth, upload.single('image'), async (req, res) => {
     }
 });
 
-// PUT update banner
+// PUT update banner (with schedule dates)
 router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, link_type, link_value, platform, section, sort_order, is_active, image_url: bodyImageUrl } = req.body;
+        const { title, link_type, link_value, platform, section, sort_order, is_active, start_date, end_date, image_url: bodyImageUrl } = req.body;
 
         // Fetch existing banner
         const existing = await pool.query('SELECT * FROM banners WHERE id = $1', [id]);
@@ -1608,8 +1614,9 @@ router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) =
         const result = await pool.query(
             `UPDATE banners
              SET title = $1, image_url = $2, link_type = $3, link_value = $4,
-                 platform = $5, section = $6, sort_order = $7, is_active = $8
-             WHERE id = $9
+                 platform = $5, section = $6, sort_order = $7, is_active = $8,
+                 start_date = $9, end_date = $10
+             WHERE id = $11
              RETURNING *`,
             [
                 title !== undefined ? title : existing.rows[0].title,
@@ -1620,6 +1627,8 @@ router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) =
                 section || existing.rows[0].section,
                 sort_order != null ? parseInt(sort_order) : existing.rows[0].sort_order,
                 is_active !== undefined ? (is_active === 'false' || is_active === false ? false : true) : existing.rows[0].is_active,
+                start_date !== undefined ? (start_date || null) : existing.rows[0].start_date,
+                end_date !== undefined ? (end_date || null) : existing.rows[0].end_date,
                 id
             ]
         );
