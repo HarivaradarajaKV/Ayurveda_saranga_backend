@@ -53,6 +53,12 @@ router.get('/', async (req, res) => {
             params
         );
 
+        if (result.rows.length > 0) {
+            const ids = result.rows.map(r => r.id);
+            pool.query('UPDATE banners SET impressions = COALESCE(impressions, 0) + 1 WHERE id = ANY($1::int[])', [ids])
+                .catch(e => console.error('Error incrementing impressions:', e.message));
+        }
+
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching banners:', error);
