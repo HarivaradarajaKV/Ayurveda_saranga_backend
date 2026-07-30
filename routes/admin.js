@@ -837,11 +837,11 @@ router.get('/categories/stats', adminAuth, async (req, res) => {
         const catRes = await pool.query(`
             SELECT
                 COUNT(*) as total,
-                COUNT(*) FILTER (WHERE is_active = true OR is_active IS NULL) as active,
-                COUNT(*) FILTER (WHERE is_active = false) as inactive,
+                COUNT(*) FILTER (WHERE is_active = true OR is_active IS NULL OR LOWER(status) = 'active' OR status IS NULL) as active,
+                COUNT(*) FILTER (WHERE is_active = false OR LOWER(status) = 'inactive') as inactive,
                 COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as total_lm,
-                COUNT(*) FILTER (WHERE (is_active = true OR is_active IS NULL) AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as active_lm,
-                COUNT(*) FILTER (WHERE is_active = false AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as inactive_lm
+                COUNT(*) FILTER (WHERE (is_active = true OR is_active IS NULL OR LOWER(status) = 'active' OR status IS NULL) AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as active_lm,
+                COUNT(*) FILTER (WHERE (is_active = false OR LOWER(status) = 'inactive') AND created_at >= NOW() - INTERVAL '60 days' AND created_at < NOW() - INTERVAL '30 days') as inactive_lm
             FROM categories
         `);
         const prodRes = await pool.query(`
@@ -875,12 +875,17 @@ router.get('/categories', adminAuth, async (req, res) => {
             SELECT 
                 c.*,
                 p.name as parent_name,
-                COUNT(DISTINCT pc.product_id) as product_count
+                (
+                    SELECT COUNT(DISTINCT p_id) FROM (
+                        SELECT id as p_id FROM products WHERE category_id = c.id OR UPPER(category) = UPPER(c.name)
+                        UNION
+                        SELECT product_id as p_id FROM product_categories WHERE category_id = c.id
+                    ) sub
+                ) as product_count
             FROM categories c
             LEFT JOIN categories p ON c.parent_id = p.id
-            LEFT JOIN product_categories pc ON c.id = pc.category_id
             GROUP BY c.id, p.name
-            ORDER BY c.name
+            ORDER BY c.created_at DESC, c.name ASC
         `);
 
         res.json(categories.rows);
@@ -890,10 +895,9 @@ router.get('/categories', adminAuth, async (req, res) => {
 });
 
 // Add new category
-// Add new category
 router.post('/categories', adminAuth, upload.single('image'), async (req, res) => {
     try {
-        const { name, description, parent_id } = req.body;
+        const { name, description, parent_id, status } = req.body;
         let image_url = req.body.image_url; // Use provided URL or null
 
         // Handle file upload if present
@@ -917,9 +921,12 @@ router.post('/categories', adminAuth, upload.single('image'), async (req, res) =
             return res.status(400).json({ error: 'Category name already exists' });
         }
 
+        const catStatus = (status || 'active').toLowerCase();
+        const isActiveBool = catStatus === 'active';
+
         const newCategory = await pool.query(
-            'INSERT INTO categories (name, description, parent_id, image_url) VALUES ($1, $2, $3, $4) RETURNING *',
-            [name, description, parent_id, image_url]
+            'INSERT INTO categories (name, description, parent_id, image_url, status, is_active) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [name, description, parent_id || null, image_url || null, catStatus, isActiveBool]
         );
 
         res.status(201).json(newCategory.rows[0]);
@@ -930,11 +937,10 @@ router.post('/categories', adminAuth, upload.single('image'), async (req, res) =
 });
 
 // Update category
-// Update category
 router.put('/categories/:id', adminAuth, upload.single('image'), async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, description, parent_id } = req.body;
+        const { name, description, parent_id, status } = req.body;
         let image_url = req.body.image_url;
 
         // Check if new name conflicts with existing categories
@@ -952,7 +958,6 @@ router.put('/categories/:id', adminAuth, upload.single('image'), async (req, res
         // Handle file upload if present
         if (req.file) {
             try {
-                // Should we delete the old image?Ideally yes, but let's first get the old URL
                 const currentCat = await pool.query('SELECT image_url FROM categories WHERE id = $1', [id]);
                 if (currentCat.rows.length > 0 && currentCat.rows[0].image_url) {
                     await deleteImage(currentCat.rows[0].image_url);
@@ -966,16 +971,21 @@ router.put('/categories/:id', adminAuth, upload.single('image'), async (req, res
             }
         }
 
+        const catStatus = status ? status.toLowerCase() : null;
+        const isActiveBool = catStatus ? catStatus === 'active' : null;
+
         const updatedCategory = await pool.query(`
             UPDATE categories 
             SET 
                 name = COALESCE($1, name),
                 description = COALESCE($2, description),
                 parent_id = $3,
-                image_url = COALESCE($4, image_url)
-            WHERE id = $5 
+                image_url = COALESCE($4, image_url),
+                status = COALESCE($5, status),
+                is_active = COALESCE($6, is_active)
+            WHERE id = $7 
             RETURNING *
-        `, [name, description, parent_id, image_url, id]);
+        `, [name, description, parent_id || null, image_url || null, catStatus, isActiveBool, id]);
 
         if (updatedCategory.rows.length === 0) {
             return res.status(404).json({ error: 'Category not found' });
