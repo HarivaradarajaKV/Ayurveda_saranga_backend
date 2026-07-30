@@ -9,12 +9,17 @@ router.get('/', async (req, res) => {
             SELECT 
                 c.*,
                 p.name as parent_name,
-                COUNT(pr.id) as product_count
+                COALESCE(pc_counts.p_count, 0) as product_count
             FROM categories c
             LEFT JOIN categories p ON c.parent_id = p.id
-            LEFT JOIN products pr ON c.id = pr.category_id
-            GROUP BY c.id, p.name
-            ORDER BY c.name
+            LEFT JOIN (
+                SELECT category_id, COUNT(*) as p_count 
+                FROM products 
+                WHERE category_id IS NOT NULL 
+                GROUP BY category_id
+            ) pc_counts ON c.id = pc_counts.category_id
+            WHERE (c.is_active = true OR c.is_active IS NULL OR LOWER(c.status) = 'active' OR c.status IS NULL)
+            ORDER BY c.name ASC
         `);
         res.json(categories.rows);
     } catch (error) {
