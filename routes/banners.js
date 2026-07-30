@@ -23,8 +23,7 @@ async function ensureBannersTable() {
     }
 }
 
-// Automatically check table on module load
-ensureBannersTable();
+// Table schema initialized statically
 
 // Public: GET /api/banners
 // Query params: platform (web|mobile|both), section (top|bottom)

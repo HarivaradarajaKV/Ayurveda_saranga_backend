@@ -215,158 +215,135 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5001;
 
-// Test database connection before starting server
-pool.connect((err, client, release) => {
-    if (err) {
-        console.error('Error connecting to the database:', err);
-        process.exit(1);
-    }
-    release();
-    console.log('Database connection successful');
+// Always export Express app for Vercel Serverless environment
+module.exports = app;
 
-    // Start server after successful database connection
-    let server;
-    try {
-        server = app.listen(PORT, () => {
-            console.log(`Server running on port ${PORT}`);
+// Only start standalone HTTP & WebSocket server when running directly (local dev / standalone node)
+if (!process.env.VERCEL && require.main === module) {
+    pool.connect((err, client, release) => {
+        if (err) {
+            console.error('Error connecting to the database:', err);
+            process.exit(1);
+        }
+        release();
+        console.log('Database connection successful');
 
-            // Only log network interfaces in development
-            if (process.env.NODE_ENV !== 'production') {
-                const interfaces = require('os').networkInterfaces();
-                const addresses = [];
+        let server;
+        try {
+            server = app.listen(PORT, () => {
+                console.log(`Server running on port ${PORT}`);
 
-                // Get all network interfaces
-                for (const iface of Object.values(interfaces)) {
-                    for (const alias of iface) {
-                        if (alias.family === 'IPv4' && !alias.internal) {
-                            addresses.push(alias.address);
+                if (process.env.NODE_ENV !== 'production') {
+                    const interfaces = require('os').networkInterfaces();
+                    const addresses = [];
+
+                    for (const iface of Object.values(interfaces)) {
+                        for (const alias of iface) {
+                            if (alias.family === 'IPv4' && !alias.internal) {
+                                addresses.push(alias.address);
+                            }
                         }
                     }
-                }
 
-                console.log('Server is accessible at:');
-                console.log(`- Local: http://localhost:${PORT}`);
-                addresses.forEach(addr => {
-                    console.log(`- Network: http://${addr}:${PORT}`);
+                    console.log('Server is accessible at:');
+                    console.log(`- Local: http://localhost:${PORT}`);
+                    addresses.forEach(addr => {
+                        console.log(`- Network: http://${addr}:${PORT}`);
+                    });
+                }
+            });
+
+            server.on('error', (error) => {
+                if (error.code === 'EADDRINUSE') {
+                    console.error(`❌ Error: Port ${PORT} is already in use by another process. Exiting...`);
+                    process.exit(1);
+                } else {
+                    console.error('Server error:', error);
+                }
+            });
+
+            const wss = new WebSocket.Server({ server });
+
+            wss.on('error', (err) => {
+                console.error('WebSocket Server error caught gracefully:', err);
+            });
+
+            async function getUserData(userId) {
+                try {
+                    const [cartResult, wishlistResult, profileResult] = await Promise.all([
+                        pool.query('SELECT * FROM cart_items WHERE user_id = $1', [userId]),
+                        pool.query('SELECT * FROM wishlist_items WHERE user_id = $1', [userId]),
+                        pool.query('SELECT * FROM users WHERE id = $1', [userId])
+                    ]);
+
+                    return {
+                        cart: cartResult.rows,
+                        wishlist: wishlistResult.rows,
+                        profile: profileResult.rows[0]
+                    };
+                } catch (error) {
+                    console.error('Error fetching user data:', error);
+                    return null;
+                }
+            }
+
+            wss.on('connection', (ws) => {
+                console.log('New WebSocket connection');
+                let currentUserId = null;
+
+                ws.on('message', async (message) => {
+                    try {
+                        const data = JSON.parse(message);
+
+                        if (data.type === 'auth') {
+                            currentUserId = data.userId;
+                            if (!clients.has(currentUserId)) {
+                                clients.set(currentUserId, new Set());
+                            }
+                            clients.get(currentUserId).add(ws);
+                        }
+
+                        if (data.type === 'sync_request' && currentUserId) {
+                            const userData = await getUserData(currentUserId);
+                            if (userData) {
+                                ws.send(JSON.stringify({
+                                    type: 'SYNC_DATA',
+                                    payload: userData
+                                }));
+                            }
+                        }
+
+                        if (data.type === 'update' && currentUserId) {
+                            const { action, payload } = data;
+                            if (clients.has(currentUserId)) {
+                                clients.get(currentUserId).forEach((client) => {
+                                    if (client !== ws && client.readyState === WebSocket.OPEN) {
+                                        client.send(JSON.stringify({
+                                            type: action,
+                                            payload
+                                        }));
+                                    }
+                                });
+                            }
+                        }
+                    } catch (error) {
+                        console.error('WebSocket message error:', error);
+                    }
                 });
 
-                // Enable CORS for all Expo development URLs
-                const allowedOrigins = [
-                    'http://localhost:19006',
-                    'http://localhost:19000',
-                    'http://localhost:8081',
-                    ...addresses.map(addr => `http://${addr}:19000`),
-                    ...addresses.map(addr => `http://${addr}:19006`),
-                    ...addresses.map(addr => `http://${addr}:8081`),
-                    ...addresses.map(addr => `http://${addr}:${PORT}`)
-                ];
-
-                console.log('CORS enabled for origins:', allowedOrigins);
-            }
-        });
-
-        // Handle server errors
-        server.on('error', (error) => {
-            if (error.code === 'EADDRINUSE') {
-                console.error(`❌ Error: Port ${PORT} is already in use by another process. Exiting...`);
-                process.exit(1);
-            } else {
-                console.error('Server error:', error);
-            }
-        });
-
-        // Initialize WebSocket server
-        const wss = new WebSocket.Server({ server });
-
-        wss.on('error', (err) => {
-            console.error('WebSocket Server error caught gracefully:', err);
-        });
-
-        // Helper function to get user data
-        async function getUserData(userId) {
-            try {
-                // Get cart, wishlist, and profile in parallel to optimize sync speed
-                const [cartResult, wishlistResult, profileResult] = await Promise.all([
-                    pool.query('SELECT * FROM cart_items WHERE user_id = $1', [userId]),
-                    pool.query('SELECT * FROM wishlist_items WHERE user_id = $1', [userId]),
-                    pool.query('SELECT * FROM users WHERE id = $1', [userId])
-                ]);
-
-                return {
-                    cart: cartResult.rows,
-                    wishlist: wishlistResult.rows,
-                    profile: profileResult.rows[0]
-                };
-            } catch (error) {
-                console.error('Error fetching user data:', error);
-                return null;
-            }
+                ws.on('close', () => {
+                    if (currentUserId && clients.has(currentUserId)) {
+                        const connections = clients.get(currentUserId);
+                        connections.delete(ws);
+                        if (connections.size === 0) {
+                            clients.delete(currentUserId);
+                        }
+                    }
+                });
+            });
+        } catch (error) {
+            console.error('Error starting server:', error);
+            process.exit(1);
         }
-
-        wss.on('connection', (ws) => {
-            console.log('New WebSocket connection');
-            let currentUserId = null;
-
-            ws.on('message', async (message) => {
-                try {
-                    const data = JSON.parse(message);
-                    console.log('WebSocket received:', data);
-
-                    // Handle user authentication
-                    if (data.type === 'auth') {
-                        currentUserId = data.userId;
-                        // Store the connection with the user ID
-                        if (!clients.has(currentUserId)) {
-                            clients.set(currentUserId, new Set());
-                        }
-                        clients.get(currentUserId).add(ws);
-                        console.log(`User ${currentUserId} connected. Total connections: ${clients.get(currentUserId).size}`);
-                    }
-
-                    // Handle sync request
-                    if (data.type === 'sync_request' && currentUserId) {
-                        const userData = await getUserData(currentUserId);
-                        if (userData) {
-                            ws.send(JSON.stringify({
-                                type: 'SYNC_DATA',
-                                payload: userData
-                            }));
-                        }
-                    }
-
-                    // Handle updates
-                    if (data.type === 'update' && currentUserId) {
-                        const { action, payload } = data;
-                        // Broadcast to all connections of the same user except sender
-                        if (clients.has(currentUserId)) {
-                            clients.get(currentUserId).forEach((client) => {
-                                if (client !== ws && client.readyState === WebSocket.OPEN) {
-                                    client.send(JSON.stringify({
-                                        type: action,
-                                        payload
-                                    }));
-                                }
-                            });
-                        }
-                    }
-                } catch (error) {
-                    console.error('WebSocket message error:', error);
-                }
-            });
-
-            ws.on('close', () => {
-                if (currentUserId && clients.has(currentUserId)) {
-                    const connections = clients.get(currentUserId);
-                    connections.delete(ws);
-                    if (connections.size === 0) {
-                        clients.delete(currentUserId);
-                    }
-                    console.log(`User ${currentUserId} disconnected. Remaining connections: ${connections.size}`);
-                }
-            });
-        });
-    } catch (error) {
-        console.error('Error starting server:', error);
-        process.exit(1);
-    }
-}); 
+    });
+} 

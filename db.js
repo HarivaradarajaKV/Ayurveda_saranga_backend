@@ -1,6 +1,8 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
+const isVercel = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
 const pool = new Pool(
     process.env.DATABASE_URL
         ? {
@@ -8,15 +10,11 @@ const pool = new Pool(
               ssl: {
                   rejectUnauthorized: false
               },
-              // Force IPv4
               family: 4,
-              max: process.env.VERCEL ? 4 : 20, // Keep pool small in Vercel Serverless to prevent PgBouncer pool exhaustion
-              idleTimeoutMillis: process.env.VERCEL ? 15000 : 300000, // Release idle connections quickly in Vercel
-              connectionTimeoutMillis: 30000, // Increased timeout
+              max: isVercel ? 2 : 10, // Small pool for Vercel serverless functions to prevent connection exhaustion
+              idleTimeoutMillis: 10000,
+              connectionTimeoutMillis: 10000,
               keepAlive: true,
-              keepAliveInitialDelayMillis: 10000,
-              retryDelayMillis: 5000, // Add retry delay
-              retryAttempts: 3 // Add retry attempts
           }
         : {
               user: process.env.DB_USER,
@@ -24,28 +22,19 @@ const pool = new Pool(
               host: process.env.DB_HOST,
               port: process.env.DB_PORT,
               database: process.env.DB_NAME,
-              ssl: false, // Disable SSL for local development
-              // Force IPv4
+              ssl: false,
               family: 4,
-              max: 20,
-              idleTimeoutMillis: 300000,
+              max: 10,
+              idleTimeoutMillis: 30000,
               connectionTimeoutMillis: 10000,
               keepAlive: true,
-              keepAliveInitialDelayMillis: 10000
           }
 );
 
-// Handle pool errors
-pool.on('error', (err, client) => {
-    console.error('Unexpected error on idle client', err?.message || err);
+// Handle pool errors gracefully without crashing process
+pool.on('error', (err) => {
+    console.error('Database pool error (non-fatal):', err?.message || err);
 });
-
-// Ensure required columns exist in products table
-pool.query(`
-    ALTER TABLE products 
-    ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'active',
-    ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
-`).catch(err => console.error('Database column initialization notice:', err?.message || err));
 
 module.exports = pool;
  

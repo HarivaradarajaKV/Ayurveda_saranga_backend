@@ -24,8 +24,7 @@ async function ensurePopupsTable() {
     }
 }
 
-// Automatically check table on module load
-ensurePopupsTable();
+// Table schema initialized statically
 
 // Public: GET /api/popups/active
 router.get('/active', async (req, res) => {
