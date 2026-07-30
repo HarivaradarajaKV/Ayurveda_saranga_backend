@@ -192,6 +192,13 @@ router.put('/:id/toggle', adminAuth, async (req, res) => {
             'UPDATE popups SET is_active = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
             [nextActive, id]
         );
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Error toggling popup status:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ─── LEADS TRACKING ROUTES ──────────────────────────────────────────────────
 
 // Public/Auth: Store Captured Popup Lead
