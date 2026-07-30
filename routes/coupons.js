@@ -22,10 +22,6 @@ router.get('/', async (req, res) => {
             FROM coupons c
             LEFT JOIN coupon_products cp ON c.id = cp.coupon_id
             LEFT JOIN products p ON cp.product_id = p.id
-            WHERE c.is_active = true
-            AND c.start_date <= CURRENT_TIMESTAMP
-            AND c.end_date >= CURRENT_TIMESTAMP
-            AND (c.usage_limit IS NULL OR c.times_used < c.usage_limit)
             GROUP BY c.id
             ORDER BY c.created_at DESC
         `);
