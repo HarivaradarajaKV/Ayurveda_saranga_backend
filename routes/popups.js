@@ -2,7 +2,7 @@ const router = require('express').Router();
 const pool = require('../db');
 const { adminAuth } = require('../middleware/auth');
 
-// Ensure popups table exists automatically
+// Ensure popups and popup_leads tables exist automatically
 async function ensurePopupsTable() {
     try {
         await pool.query(`
@@ -18,9 +18,20 @@ async function ensurePopupsTable() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS popup_leads (
+                id SERIAL PRIMARY KEY,
+                popup_id INTEGER REFERENCES popups(id) ON DELETE SET NULL,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                name VARCHAR(255),
+                email VARCHAR(255) NOT NULL,
+                phone VARCHAR(50),
+                source VARCHAR(100) DEFAULT 'google_popup',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         `);
     } catch (err) {
-        console.error('Error ensuring popups table:', err.message);
+        console.error('Error ensuring popups/leads table:', err.message);
     }
 }
 
@@ -181,9 +192,90 @@ router.put('/:id/toggle', adminAuth, async (req, res) => {
             'UPDATE popups SET is_active = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
             [nextActive, id]
         );
-        res.json(result.rows[0]);
+// ─── LEADS TRACKING ROUTES ──────────────────────────────────────────────────
+
+// Public/Auth: Store Captured Popup Lead
+router.post('/leads', async (req, res) => {
+    try {
+        await ensurePopupsTable();
+        const { popup_id, email, name, phone, user_id, source } = req.body;
+
+        if (!email) {
+            return res.status(400).json({ error: 'Email is required to log lead' });
+        }
+
+        const cleanEmail = email.toLowerCase().trim();
+        const leadSource = source || 'google_popup';
+
+        // Check if lead already captured for this popup and email
+        const existing = await pool.query(
+            'SELECT id FROM popup_leads WHERE LOWER(email) = $1 AND (popup_id = $2 OR (popup_id IS NULL AND $2 IS NULL))',
+            [cleanEmail, popup_id || null]
+        );
+
+        if (existing.rows.length > 0) {
+            // Update existing lead details if new name/phone provided
+            const updated = await pool.query(
+                `UPDATE popup_leads 
+                 SET name = COALESCE($1, name),
+                     phone = COALESCE($2, phone),
+                     user_id = COALESCE($3, user_id),
+                     created_at = CURRENT_TIMESTAMP
+                 WHERE id = $4 RETURNING *`,
+                [name || null, phone || null, user_id || null, existing.rows[0].id]
+            );
+            return res.json(updated.rows[0]);
+        }
+
+        const newLead = await pool.query(
+            `INSERT INTO popup_leads (popup_id, user_id, name, email, phone, source)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+            [popup_id || null, user_id || null, name || null, cleanEmail, phone || null, leadSource]
+        );
+
+        res.status(201).json(newLead.rows[0]);
     } catch (error) {
-        console.error('Error toggling popup status:', error);
+        console.error('Error logging popup lead:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Admin: GET /api/popups/leads - List all captured leads with popup info
+router.get('/leads', adminAuth, async (req, res) => {
+    try {
+        await ensurePopupsTable();
+        const result = await pool.query(`
+            SELECT 
+                l.id,
+                l.popup_id,
+                l.user_id,
+                l.name,
+                l.email,
+                l.phone,
+                l.source,
+                l.created_at,
+                p.title as popup_title,
+                p.image_url as popup_image
+            FROM popup_leads l
+            LEFT JOIN popups p ON l.popup_id = p.id
+            ORDER BY l.created_at DESC
+        `);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching popup leads:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Admin: DELETE /api/popups/leads/:id
+router.delete('/leads/:id', adminAuth, async (req, res) => {
+    try {
+        await ensurePopupsTable();
+        const { id } = req.params;
+        await pool.query('DELETE FROM popup_leads WHERE id = $1', [id]);
+        res.json({ message: 'Lead deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting lead:', error);
         res.status(500).json({ error: error.message });
     }
 });
