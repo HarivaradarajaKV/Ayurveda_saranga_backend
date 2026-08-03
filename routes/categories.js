@@ -49,6 +49,8 @@ router.get('/:id', async (req, res) => {
                  WHERE LOWER(c.name) = $1
                     OR LOWER(REPLACE(c.name, ' ', '-')) = $1
                     OR LOWER(REPLACE(c.name, '-', ' ')) = $1
+                    OR LOWER(REPLACE(REPLACE(c.name, 'CONCERN', 'CARE'), ' ', '-')) = $1
+                    OR LOWER(REPLACE(REPLACE(c.name, 'CARE', 'CONCERN'), ' ', '-')) = $1
                  LIMIT 1`,
                 [cleanSlug]
             );

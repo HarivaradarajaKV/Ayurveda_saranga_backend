@@ -305,6 +305,8 @@ router.get('/', apiCache(30000), async (req, res) => {
                 LOWER(c.name) = LOWER($${paramCount}) 
                 OR LOWER(REPLACE(c.name, ' ', '-')) = LOWER($${paramCount})
                 OR LOWER(REPLACE(c.name, '-', ' ')) = LOWER($${paramCount})
+                OR LOWER(REPLACE(REPLACE(c.name, 'CONCERN', 'CARE'), ' ', '-')) = LOWER($${paramCount})
+                OR LOWER(REPLACE(REPLACE(c.name, 'CARE', 'CONCERN'), ' ', '-')) = LOWER($${paramCount})
                 OR LOWER(pc.name) = LOWER($${paramCount})
                 OR LOWER(REPLACE(pc.name, ' ', '-')) = LOWER($${paramCount})
                 OR LOWER(REPLACE(pc.name, '-', ' ')) = LOWER($${paramCount})
@@ -317,6 +319,8 @@ router.get('/', apiCache(30000), async (req, res) => {
                         LOWER(c_join.name) = LOWER($${paramCount})
                         OR LOWER(REPLACE(c_join.name, ' ', '-')) = LOWER($${paramCount})
                         OR LOWER(REPLACE(c_join.name, '-', ' ')) = LOWER($${paramCount})
+                        OR LOWER(REPLACE(REPLACE(c_join.name, 'CONCERN', 'CARE'), ' ', '-')) = LOWER($${paramCount})
+                        OR LOWER(REPLACE(REPLACE(c_join.name, 'CARE', 'CONCERN'), ' ', '-')) = LOWER($${paramCount})
                     )
                 )
             )`;
