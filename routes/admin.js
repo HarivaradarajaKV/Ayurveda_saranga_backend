@@ -476,8 +476,8 @@ router.get('/orders', adminAuth, async (req, res) => {
 
         const orders = await pool.query(
             `SELECT 
-                o.id, o.status, o.total_amount, o.created_at, o.updated_at,
-                o.payment_method, o.payment_status,
+                o.id, o.status, o.total_amount, o.delivery_charge, o.discount_amount, o.created_at, o.updated_at,
+                o.payment_method, o.payment_method_type, o.payment_status, o.payment_id, o.razorpay_order_id,
                 CASE 
                     WHEN LOWER(o.payment_method) = 'cod' OR LOWER(o.payment_method_type) = 'cod' THEN 'Cash on Delivery'
                     WHEN LOWER(o.payment_method) = 'upi' THEN 'UPI'
@@ -485,13 +485,47 @@ router.get('/orders', adminAuth, async (req, res) => {
                     WHEN LOWER(o.payment_method) = 'creditcard' OR LOWER(o.payment_method) = 'credit_card' THEN 'Credit Card'
                     ELSE 'Online Payment'
                 END as payment_method_display,
-                o.shipping_full_name, o.shipping_city, o.shipping_state,
+                o.shipping_full_name, o.shipping_phone_number, o.shipping_address_line1, o.shipping_address_line2,
+                o.shipping_city, o.shipping_state, o.shipping_postal_code, o.shipping_country, o.shipping_address,
                 COALESCE(u.name, o.shipping_full_name, 'Customer') as customer_name,
-                COALESCE(u.email, '—') as customer_email,
+                COALESCE(u.name, o.shipping_full_name, 'Customer') as user_name,
+                COALESCE(u.email, o.shipping_address->>'email', '—') as customer_email,
+                COALESCE(u.email, o.shipping_address->>'email', '—') as user_email,
                 (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) as item_count,
+                COALESCE(
+                    (
+                        SELECT json_agg(json_build_object(
+                            'id', oi.id,
+                            'product_id', oi.product_id,
+                            'quantity', oi.quantity,
+                            'price_at_time', oi.price_at_time,
+                            'price', oi.price_at_time,
+                            'gst_percentage', oi.gst_percentage,
+                            'gst_amount', oi.gst_amount,
+                            'product_name', COALESCE(p.name, 'Item'),
+                            'name', COALESCE(p.name, 'Item'),
+                            'image_url', p.image_url
+                        ))
+                        FROM order_items oi
+                        LEFT JOIN products p ON oi.product_id = p.id
+                        WHERE oi.order_id = o.id
+                    ),
+                    CASE 
+                        WHEN o.items IS NOT NULL AND o.items::text != '' AND o.items::text != 'null' THEN 
+                            CASE 
+                                WHEN pg_typeof(o.items)::text = 'jsonb' OR pg_typeof(o.items)::text = 'json' THEN o.items::json
+                                ELSE '[]'::json 
+                            END
+                        ELSE '[]'::json
+                    END,
+                    '[]'::json
+                ) as items,
                 o.shipment_status,
+                o.shiprocket_order_id,
+                o.shiprocket_shipment_id,
                 o.awb_number,
-                o.courier_name
+                o.courier_name,
+                o.tracking_url
             FROM orders o
             LEFT JOIN users u ON o.user_id = u.id
             ${where}
@@ -501,6 +535,67 @@ router.get('/orders', adminAuth, async (req, res) => {
         );
 
         res.json({ orders: orders.rows, total, page: parseInt(page), limit: parseInt(limit) });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Admin single order details endpoint
+router.get('/orders/:id', adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await pool.query(
+            `SELECT 
+                o.*,
+                COALESCE(u.name, o.shipping_full_name, 'Customer') as customer_name,
+                COALESCE(u.name, o.shipping_full_name, 'Customer') as user_name,
+                COALESCE(u.email, o.shipping_address->>'email', '—') as customer_email,
+                COALESCE(u.email, o.shipping_address->>'email', '—') as user_email,
+                CASE 
+                    WHEN LOWER(o.payment_method) = 'cod' OR LOWER(o.payment_method_type) = 'cod' THEN 'Cash on Delivery'
+                    WHEN LOWER(o.payment_method) = 'upi' THEN 'UPI'
+                    WHEN LOWER(o.payment_method) = 'netbanking' OR LOWER(o.payment_method) = 'net_banking' THEN 'Net Banking'
+                    WHEN LOWER(o.payment_method) = 'creditcard' OR LOWER(o.payment_method) = 'credit_card' THEN 'Credit Card'
+                    ELSE 'Online Payment'
+                END as payment_method_display,
+                COALESCE(
+                    (
+                        SELECT json_agg(json_build_object(
+                            'id', oi.id,
+                            'product_id', oi.product_id,
+                            'quantity', oi.quantity,
+                            'price_at_time', oi.price_at_time,
+                            'price', oi.price_at_time,
+                            'gst_percentage', oi.gst_percentage,
+                            'gst_amount', oi.gst_amount,
+                            'product_name', COALESCE(p.name, 'Item'),
+                            'name', COALESCE(p.name, 'Item'),
+                            'image_url', p.image_url
+                        ))
+                        FROM order_items oi
+                        LEFT JOIN products p ON oi.product_id = p.id
+                        WHERE oi.order_id = o.id
+                    ),
+                    CASE 
+                        WHEN o.items IS NOT NULL AND o.items::text != '' AND o.items::text != 'null' THEN 
+                            CASE 
+                                WHEN pg_typeof(o.items)::text = 'jsonb' OR pg_typeof(o.items)::text = 'json' THEN o.items::json
+                                ELSE '[]'::json 
+                            END
+                        ELSE '[]'::json
+                    END,
+                    '[]'::json
+                ) as items
+            FROM orders o
+            LEFT JOIN users u ON o.user_id = u.id
+            WHERE o.id = $1`,
+            [id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+        res.json(result.rows[0]);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
