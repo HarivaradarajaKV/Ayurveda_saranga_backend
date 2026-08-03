@@ -300,15 +300,24 @@ router.get('/', apiCache(30000), async (req, res) => {
 
         // Add filters with proper type casting and error handling
         if (category) {
-            // Filter by category name in product_categories or primary category
+            // Filter by category name (slug or full name) or parent category or product_categories mapping
             query += ` AND (
                 LOWER(c.name) = LOWER($${paramCount}) 
+                OR LOWER(REPLACE(c.name, ' ', '-')) = LOWER($${paramCount})
+                OR LOWER(REPLACE(c.name, '-', ' ')) = LOWER($${paramCount})
                 OR LOWER(pc.name) = LOWER($${paramCount})
+                OR LOWER(REPLACE(pc.name, ' ', '-')) = LOWER($${paramCount})
+                OR LOWER(REPLACE(pc.name, '-', ' ')) = LOWER($${paramCount})
+                OR p.category_id::text = $${paramCount}
                 OR EXISTS (
                     SELECT 1 FROM product_categories pc_join 
                     JOIN categories c_join ON pc_join.category_id = c_join.id 
                     WHERE pc_join.product_id = p.id 
-                    AND LOWER(c_join.name) = LOWER($${paramCount})
+                    AND (
+                        LOWER(c_join.name) = LOWER($${paramCount})
+                        OR LOWER(REPLACE(c_join.name, ' ', '-')) = LOWER($${paramCount})
+                        OR LOWER(REPLACE(c_join.name, '-', ' ')) = LOWER($${paramCount})
+                    )
                 )
             )`;
             queryParams.push(category);

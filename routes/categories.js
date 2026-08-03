@@ -28,38 +28,60 @@ router.get('/', apiCache(30000), async (req, res) => {
     }
 });
 
-// Get category by ID with products
+// Get category by ID or slug with products
 router.get('/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        const isInteger = /^\d+$/.test(id);
 
-        // Get category details
-        const category = await pool.query(
-            'SELECT c.*, p.name as parent_name FROM categories c LEFT JOIN categories p ON c.parent_id = p.id WHERE c.id = $1',
-            [id]
-        );
+        let category;
+        if (isInteger) {
+            category = await pool.query(
+                'SELECT c.*, p.name as parent_name FROM categories c LEFT JOIN categories p ON c.parent_id = p.id WHERE c.id = $1',
+                [parseInt(id)]
+            );
+        } else {
+            const cleanSlug = id.toLowerCase().trim();
+            category = await pool.query(
+                `SELECT c.*, p.name as parent_name 
+                 FROM categories c 
+                 LEFT JOIN categories p ON c.parent_id = p.id 
+                 WHERE LOWER(c.name) = $1
+                    OR LOWER(REPLACE(c.name, ' ', '-')) = $1
+                    OR LOWER(REPLACE(c.name, '-', ' ')) = $1
+                 LIMIT 1`,
+                [cleanSlug]
+            );
+        }
 
         if (category.rows.length === 0) {
             return res.status(404).json({ error: 'Category not found' });
         }
 
-        // Get products in this category
+        const catData = category.rows[0];
+
+        // Get products in this category (primary or secondary via product_categories)
         const products = await pool.query(
-            `SELECT DISTINCT * FROM (
-                SELECT * FROM products WHERE category_id = $1
-                UNION
-                SELECT p.* FROM products p
-                JOIN product_categories pc ON p.id = pc.product_id
-                WHERE pc.category_id = $1
-            ) combined_products`,
-            [id]
+            `SELECT DISTINCT p.*, 
+                c.name as category_name,
+                COALESCE(AVG(r.rating), 0) as average_rating,
+                COUNT(DISTINCT r.id) as review_count
+             FROM products p
+             LEFT JOIN categories c ON p.category_id = c.id
+             LEFT JOIN product_categories pc ON p.id = pc.product_id
+             LEFT JOIN reviews r ON p.id = r.product_id
+             WHERE p.category_id = $1 OR pc.category_id = $1
+             GROUP BY p.id, c.name
+             ORDER BY p.created_at DESC`,
+            [catData.id]
         );
 
         res.json({
-            ...category.rows[0],
+            ...catData,
             products: products.rows
         });
     } catch (error) {
+        console.error('Error fetching category details:', error);
         res.status(500).json({ error: error.message });
     }
 });
