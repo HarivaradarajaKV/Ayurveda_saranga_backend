@@ -486,11 +486,11 @@ router.get('/orders', adminAuth, async (req, res) => {
                     ELSE 'Online Payment'
                 END as payment_method_display,
                 o.shipping_full_name, o.shipping_phone_number, o.shipping_address_line1, o.shipping_address_line2,
-                o.shipping_city, o.shipping_state, o.shipping_postal_code, o.shipping_country, o.shipping_address,
+                o.shipping_city, o.shipping_state, o.shipping_postal_code, o.shipping_country,
                 COALESCE(u.name, o.shipping_full_name, 'Customer') as customer_name,
                 COALESCE(u.name, o.shipping_full_name, 'Customer') as user_name,
-                COALESCE(u.email, o.shipping_address->>'email', '—') as customer_email,
-                COALESCE(u.email, o.shipping_address->>'email', '—') as user_email,
+                COALESCE(u.email, '—') as customer_email,
+                COALESCE(u.email, '—') as user_email,
                 (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) as item_count,
                 COALESCE(
                     (
@@ -510,14 +510,6 @@ router.get('/orders', adminAuth, async (req, res) => {
                         LEFT JOIN products p ON oi.product_id = p.id
                         WHERE oi.order_id = o.id
                     ),
-                    CASE 
-                        WHEN o.items IS NOT NULL AND o.items::text != '' AND o.items::text != 'null' THEN 
-                            CASE 
-                                WHEN pg_typeof(o.items)::text = 'jsonb' OR pg_typeof(o.items)::text = 'json' THEN o.items::json
-                                ELSE '[]'::json 
-                            END
-                        ELSE '[]'::json
-                    END,
                     '[]'::json
                 ) as items,
                 o.shipment_status,
@@ -536,6 +528,7 @@ router.get('/orders', adminAuth, async (req, res) => {
 
         res.json({ orders: orders.rows, total, page: parseInt(page), limit: parseInt(limit) });
     } catch (error) {
+        console.error('Error fetching admin orders:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -549,8 +542,8 @@ router.get('/orders/:id', adminAuth, async (req, res) => {
                 o.*,
                 COALESCE(u.name, o.shipping_full_name, 'Customer') as customer_name,
                 COALESCE(u.name, o.shipping_full_name, 'Customer') as user_name,
-                COALESCE(u.email, o.shipping_address->>'email', '—') as customer_email,
-                COALESCE(u.email, o.shipping_address->>'email', '—') as user_email,
+                COALESCE(u.email, '—') as customer_email,
+                COALESCE(u.email, '—') as user_email,
                 CASE 
                     WHEN LOWER(o.payment_method) = 'cod' OR LOWER(o.payment_method_type) = 'cod' THEN 'Cash on Delivery'
                     WHEN LOWER(o.payment_method) = 'upi' THEN 'UPI'
@@ -576,14 +569,6 @@ router.get('/orders/:id', adminAuth, async (req, res) => {
                         LEFT JOIN products p ON oi.product_id = p.id
                         WHERE oi.order_id = o.id
                     ),
-                    CASE 
-                        WHEN o.items IS NOT NULL AND o.items::text != '' AND o.items::text != 'null' THEN 
-                            CASE 
-                                WHEN pg_typeof(o.items)::text = 'jsonb' OR pg_typeof(o.items)::text = 'json' THEN o.items::json
-                                ELSE '[]'::json 
-                            END
-                        ELSE '[]'::json
-                    END,
                     '[]'::json
                 ) as items
             FROM orders o
@@ -597,6 +582,7 @@ router.get('/orders/:id', adminAuth, async (req, res) => {
         }
         res.json(result.rows[0]);
     } catch (error) {
+        console.error('Error fetching admin order detail:', error);
         res.status(500).json({ error: error.message });
     }
 });
