@@ -29,6 +29,30 @@ app.use((req, res, next) => {
 // WebSocket connections store
 const clients = new Map();
 
+// Automatically create high-performance database indexes
+let indexesCreated = false;
+async function ensureDatabaseIndexes() {
+    if (indexesCreated) return;
+    indexesCreated = true;
+    try {
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_products_cat_id ON products(category_id);
+            CREATE INDEX IF NOT EXISTS idx_products_created ON products(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_reviews_product ON reviews(product_id);
+            CREATE INDEX IF NOT EXISTS idx_pc_product ON product_categories(product_id);
+            CREATE INDEX IF NOT EXISTS idx_pc_category ON product_categories(category_id);
+            CREATE INDEX IF NOT EXISTS idx_na_product ON new_arrivals(product_id);
+            CREATE INDEX IF NOT EXISTS idx_bs_product ON best_sellers(product_id);
+            CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
+            CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+        `);
+    } catch (err) {
+        console.error('Error ensuring indexes (non-fatal):', err.message);
+    }
+}
+ensureDatabaseIndexes();
+
 // Enhanced CORS configuration
 app.use(cors({
     origin: function (origin, callback) {
