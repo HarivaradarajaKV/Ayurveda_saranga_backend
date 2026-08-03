@@ -487,14 +487,11 @@ router.get('/:id', apiCache(30000), async (req, res) => {
             `, [productData.id]),
             pool.query(`
                 SELECT 
-                    p.*,
-                    COALESCE(AVG(r.rating), 0) as average_rating,
-                    COUNT(DISTINCT r.id) as review_count
+                    p.id, p.name, p.price, p.image_url, p.image_url2, p.stock_quantity, p.offer_percentage, p.category_id
                 FROM products p
-                LEFT JOIN reviews r ON p.id = r.product_id
-                WHERE p.category_id = $1 AND p.id != $2
-                GROUP BY p.id
-                LIMIT 5
+                WHERE (p.category_id = $1 OR $1 IS NULL) AND p.id != $2
+                ORDER BY p.id DESC
+                LIMIT 4
             `, [productData.category_id, productData.id]),
             pool.query(`
                 SELECT c.id, c.name 
