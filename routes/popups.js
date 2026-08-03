@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { adminAuth } = require('../middleware/auth');
+const { deleteImage } = require('../services/supabaseStorage');
 
 // Ensure popups and popup_leads tables exist automatically
 async function ensurePopupsTable() {
@@ -123,10 +124,15 @@ router.put('/:id', adminAuth, async (req, res) => {
 
         const isActiveBool = is_active === 'true' || is_active === true;
 
-        // Use incoming image_url if provided, else keep existing
         const finalImageUrl = (image_url !== undefined && image_url !== null && image_url !== '')
             ? image_url
             : existing.rows[0].image_url;
+
+        if (existing.rows[0].image_url && finalImageUrl && existing.rows[0].image_url !== finalImageUrl) {
+            try {
+                await deleteImage(existing.rows[0].image_url);
+            } catch (err) {}
+        }
 
         if (isActiveBool) {
             await pool.query('UPDATE popups SET is_active = false WHERE id != $1', [id]);
@@ -163,6 +169,11 @@ router.delete('/:id', adminAuth, async (req, res) => {
         const existing = await pool.query('SELECT * FROM popups WHERE id = $1', [id]);
         if (existing.rows.length === 0) {
             return res.status(404).json({ error: 'Popup not found' });
+        }
+        if (existing.rows[0] && existing.rows[0].image_url) {
+            try {
+                await deleteImage(existing.rows[0].image_url);
+            } catch (err) {}
         }
         await pool.query('DELETE FROM popups WHERE id = $1', [id]);
         res.json({ message: 'Popup deleted successfully' });

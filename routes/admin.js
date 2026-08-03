@@ -1702,6 +1702,12 @@ router.put('/banners/:id', adminAuth, upload.single('image'), async (req, res) =
             }
         }
 
+        if (existing.rows[0].image_url && image_url && existing.rows[0].image_url !== image_url) {
+            try {
+                await deleteImage(existing.rows[0].image_url);
+            } catch (err) {}
+        }
+
         const result = await pool.query(
             `UPDATE banners
              SET title = $1, image_url = $2, link_type = $3, link_value = $4,

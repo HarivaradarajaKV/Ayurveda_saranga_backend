@@ -2,7 +2,7 @@ const router = require('express').Router();
 const pool = require('../db');
 const { adminAuth } = require('../middleware/auth');
 const upload = require('../middleware/upload');
-const { uploadCategoryImage } = require('../services/supabaseStorage');
+const { uploadCategoryImage, deleteImage } = require('../services/supabaseStorage');
 const { apiCache } = require('../middleware/apiCache');
 
 // Admin: list all combos (active and inactive)
@@ -306,6 +306,13 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
             }
         }
 
+        const existingCombo = await pool.query('SELECT image_url FROM combo_offers WHERE id = $1', [id]);
+        if (existingCombo.rows.length > 0 && existingCombo.rows[0].image_url && image_url && existingCombo.rows[0].image_url !== image_url) {
+            try {
+                await deleteImage(existingCombo.rows[0].image_url);
+            } catch (err) {}
+        }
+
         await client.query('BEGIN');
         const updateResult = await client.query(`
             UPDATE combo_offers
@@ -358,6 +365,12 @@ router.put('/:id', adminAuth, upload.single('image'), async (req, res) => {
 router.delete('/:id', adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
+        const existingCombo = await pool.query('SELECT image_url FROM combo_offers WHERE id = $1', [id]);
+        if (existingCombo.rows.length > 0 && existingCombo.rows[0].image_url) {
+            try {
+                await deleteImage(existingCombo.rows[0].image_url);
+            } catch (err) {}
+        }
         await pool.query('DELETE FROM combo_offer_items WHERE combo_id = $1', [id]);
         await pool.query('DELETE FROM combo_offers WHERE id = $1', [id]);
         res.json({ success: true });

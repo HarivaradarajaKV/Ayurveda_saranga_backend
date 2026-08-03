@@ -1085,15 +1085,34 @@ router.delete('/:id', adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
 
-        const deletedProduct = await pool.query(
-            'DELETE FROM products WHERE id = $1 RETURNING *',
-            [id]
-        );
-
-        if (deletedProduct.rows.length === 0) {
+        // Fetch existing product to clean up image URLs from storage
+        const existingRes = await pool.query('SELECT image_url, image_url2, image_url3, image_url4, media FROM products WHERE id = $1', [id]);
+        if (existingRes.rows.length === 0) {
             return res.status(404).json({ error: 'Product not found' });
         }
 
+        const prod = existingRes.rows[0];
+        const urlsToDelete = new Set();
+
+        if (prod.image_url) urlsToDelete.add(prod.image_url);
+        if (prod.image_url2) urlsToDelete.add(prod.image_url2);
+        if (prod.image_url3) urlsToDelete.add(prod.image_url3);
+        if (prod.image_url4) urlsToDelete.add(prod.image_url4);
+
+        if (Array.isArray(prod.media)) {
+            prod.media.forEach(m => {
+                if (m && typeof m === 'object' && m.url) urlsToDelete.add(m.url);
+                else if (typeof m === 'string') urlsToDelete.add(m);
+            });
+        }
+
+        for (const url of urlsToDelete) {
+            try {
+                await deleteImage(url);
+            } catch (err) {}
+        }
+
+        await pool.query('DELETE FROM products WHERE id = $1', [id]);
         res.json({ message: 'Product deleted successfully' });
     } catch (error) {
         res.status(500).json({ error: error.message });
