@@ -3,6 +3,7 @@ const pool = require('../db');
 const { adminAuth } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 const { uploadCategoryImage } = require('../services/supabaseStorage');
+const { apiCache } = require('../middleware/apiCache');
 
 // Admin: list all combos (active and inactive)
 router.get('/all', adminAuth, async (req, res) => {
@@ -70,7 +71,7 @@ router.get('/all', adminAuth, async (req, res) => {
 });
 
 // Public: list all combos (active, upcoming, expired) - frontend will filter as needed
-router.get('/', async (req, res) => {
+router.get('/', apiCache(30000), async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT 

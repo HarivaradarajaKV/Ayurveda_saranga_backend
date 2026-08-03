@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const pool = require('../db');
+const { apiCache } = require('../middleware/apiCache');
 
 // Ensure banners table exists automatically
 async function ensureBannersTable() {
@@ -27,7 +28,7 @@ async function ensureBannersTable() {
 
 // Public: GET /api/banners
 // Query params: platform (web|mobile|both), section (top|bottom)
-router.get('/', async (req, res) => {
+router.get('/', apiCache(30000), async (req, res) => {
     try {
         await ensureBannersTable();
         const { platform, section } = req.query;

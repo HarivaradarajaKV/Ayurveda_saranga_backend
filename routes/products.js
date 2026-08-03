@@ -4,6 +4,7 @@ const { auth, adminAuth } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
 const { uploadProductImage, deleteImage, createSignedUploadUrl } = require('../services/supabaseStorage');
+const { apiCache } = require('../middleware/apiCache');
 
 const os = require('os');
 
@@ -120,7 +121,7 @@ router.post('/signed-upload-url', adminAuth, async (req, res) => {
 });
 
 // Get only best seller products (dedicated public endpoint)
-router.get('/best-sellers', async (req, res) => {
+router.get('/best-sellers', apiCache(30000), async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT
@@ -177,7 +178,7 @@ router.get('/best-sellers', async (req, res) => {
 });
 
 // Get only new arrival products (dedicated public endpoint)
-router.get('/new-arrivals', async (req, res) => {
+router.get('/new-arrivals', apiCache(30000), async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT
@@ -234,7 +235,7 @@ router.get('/new-arrivals', async (req, res) => {
 });
 
 // Get all products with filters
-router.get('/', async (req, res) => {
+router.get('/', apiCache(30000), async (req, res) => {
     try {
         const {
             category,

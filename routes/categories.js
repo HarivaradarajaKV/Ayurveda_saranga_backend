@@ -1,9 +1,10 @@
 const router = require('express').Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
+const { apiCache } = require('../middleware/apiCache');
 
 // Get all categories
-router.get('/', async (req, res) => {
+router.get('/', apiCache(30000), async (req, res) => {
     try {
         const categories = await pool.query(`
             SELECT 
