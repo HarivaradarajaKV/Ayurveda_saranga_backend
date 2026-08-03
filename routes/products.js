@@ -447,15 +447,12 @@ router.get('/:id', apiCache(30000), async (req, res) => {
                 SELECT 
                     p.*,
                     c.name as category_name,
-                    pc.name as parent_category_name,
-                    COALESCE(AVG(r.rating), 0) as average_rating,
-                    COUNT(DISTINCT r.id) as review_count
+                    pc.name as parent_category_name
                 FROM products p
                 LEFT JOIN categories c ON p.category_id = c.id
                 LEFT JOIN categories pc ON c.parent_id = pc.id
-                LEFT JOIN reviews r ON p.id = r.product_id
                 WHERE p.id = $1
-                GROUP BY p.id, c.name, pc.name
+                LIMIT 1
             `, [parseInt(id)]);
         } else {
             const cleanSlug = id.toLowerCase().trim();
@@ -463,18 +460,14 @@ router.get('/:id', apiCache(30000), async (req, res) => {
                 SELECT 
                     p.*,
                     c.name as category_name,
-                    pc.name as parent_category_name,
-                    COALESCE(AVG(r.rating), 0) as average_rating,
-                    COUNT(DISTINCT r.id) as review_count
+                    pc.name as parent_category_name
                 FROM products p
                 LEFT JOIN categories c ON p.category_id = c.id
                 LEFT JOIN categories pc ON c.parent_id = pc.id
-                LEFT JOIN reviews r ON p.id = r.product_id
                 WHERE LOWER(p.name) = $1
                    OR LOWER(REPLACE(p.name, ' ', '-')) = $1
                    OR LOWER(REPLACE(REPLACE(p.name, ' ', '-'), '&', 'and')) = $1
                    OR LOWER(REPLACE(REPLACE(p.name, '\'', ''), ' ', '-')) = $1
-                GROUP BY p.id, c.name, pc.name
                 LIMIT 1
             `, [cleanSlug]);
         }
@@ -485,10 +478,17 @@ router.get('/:id', apiCache(30000), async (req, res) => {
 
         const productData = product.rows[0];
 
-        // Execute remaining queries in parallel using productData.id to drastically improve loading speed and prevent cast issues
-        const [naCheck, bsCheck, reviews, relatedProducts, categoriesResult] = await Promise.all([
-            pool.query('SELECT 1 FROM new_arrivals WHERE product_id = $1', [productData.id]),
-            pool.query('SELECT 1 FROM best_sellers WHERE product_id = $1', [productData.id]),
+        // Execute remaining queries in parallel using productData.id for 1ms response speed
+        const [ratingStats, naCheck, bsCheck, reviews, relatedProducts, categoriesResult] = await Promise.all([
+            pool.query(`
+                SELECT 
+                    COALESCE(AVG(rating), 0) as average_rating,
+                    COUNT(id) as review_count
+                FROM reviews 
+                WHERE product_id = $1
+            `, [productData.id]),
+            pool.query('SELECT 1 FROM new_arrivals WHERE product_id = $1 LIMIT 1', [productData.id]),
+            pool.query('SELECT 1 FROM best_sellers WHERE product_id = $1 LIMIT 1', [productData.id]),
             pool.query(`
                 SELECT 
                     r.*,
@@ -497,6 +497,7 @@ router.get('/:id', apiCache(30000), async (req, res) => {
                 JOIN users u ON r.user_id = u.id
                 WHERE r.product_id = $1
                 ORDER BY r.created_at DESC
+                LIMIT 20
             `, [productData.id]),
             pool.query(`
                 SELECT 
@@ -525,8 +526,11 @@ router.get('/:id', apiCache(30000), async (req, res) => {
             }
         }
 
+        const stats = ratingStats.rows[0] || {};
         const result = {
             ...productData,
+            average_rating: stats.average_rating ? parseFloat(stats.average_rating) : 0,
+            review_count: stats.review_count ? parseInt(stats.review_count, 10) : 0,
             media: Array.isArray(parsedMedia) ? parsedMedia : [],
             is_new_arrival: naCheck.rows.length > 0,
             is_best_seller: bsCheck.rows.length > 0,
