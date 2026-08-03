@@ -85,7 +85,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
     etag: true,
     lastModified: true,
     setHeaders: (res, filePath) => {
-        if (filePath.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i)) {
+        if (filePath.match(/\.(jpg|jpeg|png|gif|webp|avif|svg)$/i)) {
             res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
             res.setHeader('Expires', new Date(Date.now() + 31536000000).toUTCString());
             res.setHeader('Vary', 'Accept-Encoding');

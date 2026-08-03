@@ -123,7 +123,8 @@ async function uploadCategoryImage(filePath, categoryInfos) {
             '.jpeg': 'image/jpeg',
             '.png': 'image/png',
             '.gif': 'image/gif',
-            '.webp': 'image/webp'
+            '.webp': 'image/webp',
+            '.avif': 'image/avif'
         };
         const contentType = contentTypeMap[ext] || 'image/jpeg';
 
@@ -167,6 +168,7 @@ async function uploadProductImage(filePath, productId, imageIndex, originalName)
             '.png': 'image/png',
             '.gif': 'image/gif',
             '.webp': 'image/webp',
+            '.avif': 'image/avif',
             '.mp4': 'video/mp4',
             '.mov': 'video/quicktime',
             '.avi': 'video/x-msvideo',

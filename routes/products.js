@@ -21,8 +21,8 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-    // Accept images, gifs, videos, and documents
-    if (!file.originalname.match(/\.(jpg|jpeg|png|gif|mp4|mov|avi|webm|pdf|doc|docx|txt|xls|xlsx)$/i)) {
+    // Accept images, webp, avif, gifs, videos, and documents
+    if (!file.originalname.match(/\.(jpg|jpeg|png|gif|webp|avif|mp4|mov|avi|webm|pdf|doc|docx|txt|xls|xlsx)$/i)) {
         return cb(new Error('Only image, gif, video, and document files are allowed!'), false);
     }
     cb(null, true);
