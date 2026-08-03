@@ -423,7 +423,7 @@ router.get('/', apiCache(30000), async (req, res) => {
 });
 
 // Get product by id or slug
-router.get('/:id', async (req, res) => {
+router.get('/:id', apiCache(30000), async (req, res) => {
     try {
         const { id } = req.params;
         let product;
@@ -445,6 +445,7 @@ router.get('/:id', async (req, res) => {
                 GROUP BY p.id, c.name, pc.name
             `, [parseInt(id)]);
         } else {
+            const cleanSlug = id.toLowerCase().trim();
             product = await pool.query(`
                 SELECT 
                     p.*,
@@ -456,10 +457,13 @@ router.get('/:id', async (req, res) => {
                 LEFT JOIN categories c ON p.category_id = c.id
                 LEFT JOIN categories pc ON c.parent_id = pc.id
                 LEFT JOIN reviews r ON p.id = r.product_id
-                WHERE LOWER(REPLACE(p.name, ' ', '-')) = LOWER($1)
-                   OR TRIM(BOTH '-' FROM LOWER(REGEXP_REPLACE(p.name, '[^a-zA-Z0-9]+', '-', 'g'))) = $1
+                WHERE LOWER(p.name) = $1
+                   OR LOWER(REPLACE(p.name, ' ', '-')) = $1
+                   OR LOWER(REPLACE(REPLACE(p.name, ' ', '-'), '&', 'and')) = $1
+                   OR LOWER(REPLACE(REPLACE(p.name, '\'', ''), ' ', '-')) = $1
                 GROUP BY p.id, c.name, pc.name
-            `, [id]);
+                LIMIT 1
+            `, [cleanSlug]);
         }
 
         if (product.rows.length === 0) {
