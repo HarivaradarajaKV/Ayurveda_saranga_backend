@@ -73,7 +73,7 @@ router.get('/:id', async (req, res) => {
              WHERE p.category_id = $1 OR pc.category_id = $1
              GROUP BY p.id, c.name
              ORDER BY p.created_at DESC`,
-            [catData.id]
+            [parseInt(catData.id)]
         );
 
         res.json({
