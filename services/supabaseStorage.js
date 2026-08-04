@@ -1,11 +1,12 @@
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
+const FALLBACK_SUPABASE_URL = 'https://cwqnxoijlvtlmygdgzme.supabase.co';
 const FALLBACK_SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3cW54b2lqbHZ0bXlnZGd6bWUiLCJyb2xlIjoic2VydmljZV9yb2xlIiwiaWF0IjoxNzYwMjM5OTY0LCJleHAiOjIwNzU4MTU5NjR9.Eaj7zvUy-Hahuc5hqbIPKdLc3kk0wx79XQ4jsN7ph50';
 
 // Initialize Supabase client with service role key for backend operations
 const supabase = createClient(
-    process.env.SUPABASE_URL,
+    process.env.SUPABASE_URL || FALLBACK_SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY || FALLBACK_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY
 );
 
@@ -25,11 +26,12 @@ async function uploadImage(fileBuffer, fileName, contentType) {
         const fileExtension = fileName.split('.').pop();
         const uniqueFileName = `${fileName.split('.')[0]}-${timestamp}.${fileExtension}`;
 
-        // Upload to Supabase Storage
+        // Upload to Supabase Storage with 1-year cache control header
         const { data, error } = await supabase.storage
             .from(BUCKET_NAME)
             .upload(uniqueFileName, fileBuffer, {
                 contentType: contentType,
+                cacheControl: '31536000',
                 upsert: false
             });
 
