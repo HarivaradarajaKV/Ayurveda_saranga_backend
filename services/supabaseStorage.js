@@ -26,10 +26,28 @@ async function uploadImage(fileBuffer, fileName, contentType) {
         const fileExtension = fileName.split('.').pop();
         const uniqueFileName = `${fileName.split('.')[0]}-${timestamp}.${fileExtension}`;
 
+        // Optimize heavy image buffers automatically before uploading
+        let uploadBuffer = fileBuffer;
+        if (contentType && contentType.startsWith('image/') && !contentType.includes('gif') && !contentType.includes('svg')) {
+            try {
+                const Jimp = require('jimp');
+                const image = await Jimp.read(fileBuffer);
+                const maxDim = (fileName.toLowerCase().includes('banner') || fileName.toLowerCase().includes('popup')) ? 1600 : 800;
+                if (image.bitmap.width > maxDim || image.bitmap.height > maxDim) {
+                    image.scaleToFit(maxDim, maxDim);
+                }
+                image.quality(82);
+                const mime = contentType.includes('png') ? Jimp.MIME_PNG : Jimp.MIME_JPEG;
+                uploadBuffer = await image.getBuffer(mime);
+            } catch (optErr) {
+                uploadBuffer = fileBuffer; // Fallback safely to original buffer if processing fails
+            }
+        }
+
         // Upload to Supabase Storage with 1-year cache control header
         const { data, error } = await supabase.storage
             .from(BUCKET_NAME)
-            .upload(uniqueFileName, fileBuffer, {
+            .upload(uniqueFileName, uploadBuffer, {
                 contentType: contentType,
                 cacheControl: '31536000',
                 upsert: false
