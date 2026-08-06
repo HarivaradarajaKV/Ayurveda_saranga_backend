@@ -466,8 +466,10 @@ router.get('/:id', apiCache(30000), async (req, res) => {
                 LEFT JOIN categories pc ON c.parent_id = pc.id
                 WHERE LOWER(p.name) = $1
                    OR LOWER(REPLACE(p.name, ' ', '-')) = $1
+                   OR LOWER(REPLACE(p.name, ' ', '_')) = $1
                    OR LOWER(REPLACE(REPLACE(p.name, ' ', '-'), '&', 'and')) = $1
                    OR LOWER(REPLACE(REPLACE(p.name, '\'', ''), ' ', '-')) = $1
+                   OR LOWER(REPLACE($1, '_', '-')) = LOWER(REPLACE(p.name, ' ', '-'))
                 LIMIT 1
             `, [cleanSlug]);
         }
